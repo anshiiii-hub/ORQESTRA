@@ -1,5 +1,6 @@
 import csv
 import io
+import math
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -32,17 +33,22 @@ def summarize_csv(csv_text: str, inputs: dict[str, Any]) -> dict:
             if not raw: continue
             try:
                 dec = Decimal(raw)
-                if not dec.is_finite(): raise InvalidOperation()
-                vals.append(dec)
             except (InvalidOperation, ValueError):
                 vals = []
                 break
+            if not dec.is_finite() or not math.isfinite(float(dec)):
+                raise AgentError(f"Numeric value in column {column!r} is outside the supported finite range")
+            vals.append(dec)
         if vals:
-            result["numeric_columns"][column] = {
-                "count": len(vals), "sum": float(sum(vals)),
-                "mean": float(sum(vals) / len(vals)),
+            total = sum(vals)
+            stats = {
+                "count": len(vals), "sum": float(total),
+                "mean": float(total / len(vals)),
                 "min": float(min(vals)), "max": float(max(vals)),
             }
+            if not all(math.isfinite(value) for value in stats.values()):
+                raise AgentError(f"Numeric summary for column {column!r} is outside the supported finite range")
+            result["numeric_columns"][column] = stats
     return result
 
 def verify_result(csv_text: str, inputs: dict[str, Any]) -> dict:
