@@ -33,6 +33,7 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      DISABLED_AGENTS: ${DISABLED_AGENTS:-}
     ports: ["127.0.0.1:${API_PORT:-8001}:8000"]
     depends_on:
       migrate: {condition: service_completed_successfully}
@@ -45,6 +46,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
       REDIS_URL: redis://redis:6379/0
+      DISABLED_AGENTS: ${DISABLED_AGENTS:-}
     depends_on:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}

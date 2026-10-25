@@ -12,6 +12,7 @@ from .registry import REGISTRY, AgentRegistry, RegistryError
 
 def failed_result(request: AgentRequest, code: str, stage: str, message: str) -> AgentResult:
     return AgentResult(
+        schema_version=request.schema_version,
         request_id=request.request_id,
         workflow_id=request.workflow_id,
         task_id=request.task_id,
@@ -45,6 +46,10 @@ def validate_result(
     if parsed.artifact_ids or not set(parsed.source_refs).issubset(request.context_refs.values()):
         raise ValueError("Unrecognized artifact or source reference")
     if parsed.status == "succeeded":
+        if set(parsed.source_refs) != set(request.context_refs.values()) or len(
+            parsed.source_refs
+        ) != len(set(parsed.source_refs)):
+            raise ValueError("Agent result is missing or duplicates its input provenance")
         agent = registry.select(
             request.capability,
             agent_id=request.agent_type,
@@ -104,6 +109,7 @@ def dispatch(
         )
     try:
         result = AgentResult(
+            schema_version=request.schema_version,
             request_id=request.request_id,
             workflow_id=request.workflow_id,
             task_id=request.task_id,

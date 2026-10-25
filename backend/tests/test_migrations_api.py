@@ -113,3 +113,51 @@ def test_authenticated_workflow_runs_on_migrated_database(migrated_database, mon
             assert events[-1]["kind"] == "workflow_succeeded"
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_contract_migration_backfills_and_resumes_existing_queue(migrated_database, monkeypatch):
+    from sqlalchemy import MetaData, Table
+
+    from app.models import Task
+
+    engine, sessions, config = migrated_database
+    command.downgrade(config, "0002")
+    old_tasks = Table("tasks", MetaData(), autoload_with=engine)
+    with sessions.begin() as db:
+        workflow = Workflow(prompt="Existing queued workflow", input_csv="item,sales\nA,10\nB,20")
+        db.add(workflow)
+        db.flush()
+        for index, (name, agent, dependencies) in enumerate(
+            [
+                ("inspect", "csv_inspector", []),
+                ("summarize", "csv_summarizer", ["inspect"]),
+                ("verify", "result_verifier", ["summarize"]),
+            ]
+        ):
+            db.execute(
+                old_tasks.insert().values(
+                    id=f"old-task-{index}",
+                    workflow_id=workflow.id,
+                    name=name,
+                    agent=agent,
+                    dependencies=dependencies,
+                    status="pending",
+                    ordinal=index,
+                    attempts=0,
+                )
+            )
+    command.upgrade(config, "head")
+    with sessions() as db:
+        verifier = db.get(Task, "old-task-2")
+        assert verifier.capability == "result.verify"
+        assert verifier.input_bindings == {"inspect": "inspect", "summarize": "summarize"}
+        assert set(verifier.dependencies) == {"inspect", "summarize"}
+        assert verifier.result_envelope is None
+    monkeypatch.setattr(worker, "SessionLocal", sessions)
+    for _ in range(4):
+        worker.tick()
+    with sessions() as db:
+        assert db.get(Workflow, workflow.id).status == "succeeded"
+        assert (
+            db.get(Workflow, workflow.id).output["summary"]["numeric_columns"]["sales"]["sum"] == 30
+        )

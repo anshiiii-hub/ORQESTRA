@@ -10,6 +10,8 @@ from app.registry import AgentRegistry, RegistryError, build_registry
 
 def request(**updates):
     body = {
+        "schema_version": "1.0",
+        "agent_version": "1.0.0",
         "request_id": "request-1",
         "workflow_id": "workflow-1",
         "task_id": "task-1",
@@ -185,3 +187,54 @@ def test_committed_schemas_match_runtime_models():
 
     for name, schema in schemas().items():
         assert json.loads((SCHEMA_DIRECTORY / name).read_text()) == schema
+
+
+@pytest.mark.parametrize("passed", [1, "true", False])
+def test_verification_flag_requires_literal_boolean_true(passed):
+    from app.contracts import VerificationOutput
+
+    with pytest.raises(ValidationError):
+        VerificationOutput.model_validate(
+            {
+                "passed": passed,
+                "checks": ["check"],
+                "summary": {"row_count": 1, "columns": ["a"], "numeric_columns": {}},
+            }
+        )
+
+
+def test_version_tags_are_required_on_wire_messages():
+    original = request().model_dump()
+    for key in ["schema_version", "agent_version"]:
+        with pytest.raises(ValidationError):
+            AgentRequest.model_validate(
+                {name: value for name, value in original.items() if name != key}
+            )
+        result = dispatch(request()).model_dump()
+        with pytest.raises(ValidationError):
+            AgentResult.model_validate(
+                {name: value for name, value in result.items() if name != key}
+            )
+
+
+def test_unknown_disabled_agent_configuration_is_rejected():
+    with pytest.raises(ValueError, match="unregistered"):
+        build_registry(("typo-agent",))
+
+
+def test_result_must_preserve_all_parent_references():
+    inspected = dispatch(request())
+    summary_request = request(
+        agent_type="csv_summarizer",
+        capability="csv.summarize",
+        task_id="task-2",
+        context_refs={"inspect": "task-1"},
+        payload={
+            "csv_text": "item,sales\nA,10\nB,20",
+            "context": {"inspect": inspected.structured_output},
+        },
+    )
+    result = dispatch(summary_request).model_dump()
+    for refs in [[], ["task-1", "task-1"], ["foreign-task"]]:
+        with pytest.raises(ValueError):
+            validate_result(summary_request, {**result, "source_refs": refs})

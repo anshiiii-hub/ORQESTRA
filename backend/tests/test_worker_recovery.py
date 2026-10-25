@@ -74,6 +74,8 @@ def test_recovered_active_workflow_completes(sessions):
                     name=planned.id,
                     agent=planned.agent,
                     dependencies=planned.dependencies,
+                    capability=planned.capability,
+                    input_bindings=planned.input_bindings,
                     ordinal=ordinal,
                     status="running" if ordinal == 0 else "pending",
                 )

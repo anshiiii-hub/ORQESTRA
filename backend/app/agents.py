@@ -2,7 +2,7 @@ import csv
 import io
 import math
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable
+from typing import Any
 
 
 class AgentError(Exception):
@@ -116,10 +116,3 @@ def verify_result(csv_text: str, inputs: dict[str, Any]) -> dict:
         ],
         "summary": summary,
     }
-
-
-AGENTS: dict[str, Callable] = {
-    "csv_inspector": inspect_csv,
-    "csv_summarizer": summarize_csv,
-    "result_verifier": verify_result,
-}

@@ -38,6 +38,13 @@ class Task(Base):
     )
     name: Mapped[str] = mapped_column(String(64))
     agent: Mapped[str] = mapped_column(String(64))
+    capability: Mapped[str] = mapped_column(String(64), default="")
+    agent_version: Mapped[str] = mapped_column(String(16), default="1.0.0")
+    schema_version: Mapped[str] = mapped_column(String(16), default="1.0")
+    input_bindings: Mapped[dict] = mapped_column(JSON, default=dict)
+    request_envelope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_envelope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     dependencies: Mapped[list] = mapped_column(JSON, default=list)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -91,3 +98,11 @@ class LoginSession(Base):
     csrf_token: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeats"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    agent_versions: Mapped[dict] = mapped_column(JSON)

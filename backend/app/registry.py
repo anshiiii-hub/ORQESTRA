@@ -98,6 +98,8 @@ def build_registry(disabled: tuple[str, ...] = ()) -> AgentRegistry:
             (("inspect", "csv.inspect"), ("summarize", "csv.summarize")),
         ),
     ]
+    if set(disabled) - {agent.agent_id for agent in definitions}:
+        raise ValueError("DISABLED_AGENTS contains an unregistered agent ID")
     from dataclasses import replace
 
     return AgentRegistry(

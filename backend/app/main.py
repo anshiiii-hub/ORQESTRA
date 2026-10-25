@@ -7,13 +7,15 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import Identity, current_identity
 from .auth import router as auth_router
 from .db import SessionLocal, get_db
+from .export_contracts import schemas
+from .heartbeats import agent_catalog
 from .migrate import require_current_schema
 from .models import Event, Membership, Task, Workflow
 from .planner import demo_plan
@@ -26,7 +28,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -92,6 +94,11 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
                 "id": t.id,
                 "name": t.name,
                 "agent": t.agent,
+                "capability": t.capability,
+                "agent_version": t.agent_version,
+                "schema_version": t.schema_version,
+                "error_code": t.error_code,
+                "execution": t.result_envelope,
                 "status": t.status,
                 "dependencies": t.dependencies,
                 "attempts": t.attempts,
@@ -105,7 +112,17 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.3.0"}
+    return {"status": "ok", "version": "0.4.0"}
+
+
+@app.get("/api/v1/agents")
+def list_agents(identity: Identity = Depends(current_identity), db: Session = Depends(get_db)):
+    return agent_catalog(db)
+
+
+@app.get("/api/v1/agents/contracts")
+def agent_contracts(identity: Identity = Depends(current_identity)):
+    return schemas()
 
 
 @app.post("/api/v1/workflows", status_code=202)
@@ -117,7 +134,10 @@ def create_workflow(
     from .auth import require_role
 
     require_role(db, body.workspace_id, identity, ("owner", "member"))
-    plan = demo_plan()
+    try:
+        plan = demo_plan()
+    except ValidationError:
+        raise HTTPException(503, "Required demo agents are unavailable") from None
     w = Workflow(
         prompt=body.prompt,
         input_csv=body.csv_text,
@@ -129,7 +149,17 @@ def create_workflow(
     db.flush()
     for i, p in enumerate(plan.tasks):
         db.add(
-            Task(workflow_id=w.id, name=p.id, agent=p.agent, dependencies=p.dependencies, ordinal=i)
+            Task(
+                workflow_id=w.id,
+                name=p.id,
+                agent=p.agent,
+                dependencies=p.dependencies,
+                ordinal=i,
+                capability=p.capability,
+                agent_version=p.agent_version,
+                schema_version=p.schema_version,
+                input_bindings=p.input_bindings,
+            )
         )
     event(
         db,

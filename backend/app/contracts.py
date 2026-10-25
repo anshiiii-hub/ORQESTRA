@@ -3,7 +3,7 @@
 import json
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")]
 Capability = Literal["csv.inspect", "csv.summarize", "result.verify"]
@@ -68,6 +68,13 @@ class VerificationOutput(Contract):
     checks: list[str] = Field(min_length=1, max_length=20)
     summary: SummaryOutput
 
+    @field_validator("passed", mode="before")
+    @classmethod
+    def strict_passed(cls, value):
+        if value is not True:
+            raise ValueError("Verification must explicitly pass")
+        return value
+
 
 class TaskContext(Contract):
     inspect: InspectionOutput | None = None
@@ -80,12 +87,12 @@ class CSVInput(Contract):
 
 
 class AgentRequest(Contract):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0"]
     request_id: Identifier
     workflow_id: Identifier
     task_id: Identifier
     agent_type: Identifier
-    agent_version: Literal["1.0.0"] = "1.0.0"
+    agent_version: Literal["1.0.0"]
     capability: Capability
     objective: str = Field(min_length=1, max_length=3000)
     input_artifact_ids: list[Identifier] = Field(default_factory=list, max_length=20)
@@ -120,12 +127,12 @@ class AgentFailure(Contract):
 
 
 class AgentResult(Contract):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0"]
     request_id: Identifier
     workflow_id: Identifier
     task_id: Identifier
     agent_type: Identifier
-    agent_version: Literal["1.0.0"] = "1.0.0"
+    agent_version: Literal["1.0.0"]
     status: Literal["succeeded", "failed"]
     summary: str = Field(min_length=1, max_length=1000)
     structured_output: dict[str, JsonValue] | None = None
