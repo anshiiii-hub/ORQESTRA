@@ -4,3 +4,7 @@
 **/node_modules/
 **/dist/
 *.db
+**/.mypy_cache/
+**/.ruff_cache/
+.venv/
+*.tsbuildinfo
