@@ -278,3 +278,40 @@ def test_legacy_assignment_is_explicit_and_cannot_move_scoped_workflows(
     with sessions.begin() as db:
         with pytest.raises(ValueError, match="reassignment refused"):
             assign_legacy(db, legacy.id, other_id)
+
+
+def test_registration_can_be_disabled(api_client, monkeypatch):
+    monkeypatch.setenv("ALLOW_REGISTRATION", "false")
+    response = api_client.post(
+        f"{AUTH}/register", json={"email": "blocked@example.com", "password": PASSWORD}
+    )
+    assert response.status_code == 403
+
+
+def test_secure_cookie_setting(api_client, monkeypatch):
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "true")
+    response = api_client.post(
+        f"{AUTH}/register", json={"email": "secure@example.com", "password": PASSWORD}
+    )
+    assert response.status_code == 201
+    assert "secure" in response.headers["set-cookie"].lower().split("; ")
+
+
+def test_cors_allows_credentials_only_for_configured_origin(api_client):
+    path = f"{AUTH}/login"
+    good = api_client.options(
+        path,
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type,X-CSRF-Token",
+        },
+    )
+    assert good.status_code == 200
+    assert good.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert good.headers["access-control-allow-credentials"] == "true"
+    bad = api_client.options(
+        path, headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"}
+    )
+    assert bad.status_code == 400
+    assert "access-control-allow-origin" not in bad.headers

@@ -27,7 +27,7 @@ docker compose run --rm --no-deps api python -m app.migrate --adopt-existing
 docker compose up --build -d
 ```
 
-The adoption command compares existing tables, columns, types, indexes, and foreign keys with the Checkpoint 01 models. If they differ, it refuses adoption. If they match, it records revision `0001` without replacing tables or data. It refuses an already versioned database; use `alembic upgrade head` instead. Do not bypass a failed check with a manual stamp. Review the differences and back up before attempting repairs.
+The adoption command compares existing tables, columns, types, indexes, and foreign keys with the frozen Checkpoint 01 schema. If they differ, it refuses adoption. If they match, it records revision `0001` without replacing tables or data. The following startup applies later migrations, including account/workspace/session tables in revision `0002`. Existing versioned Checkpoint 02 databases only need `alembic upgrade head`. It refuses an already versioned database; use `alembic upgrade head` instead. Do not bypass a failed check with a manual stamp. Review the differences and back up before attempting repairs.
 
 Backups contain project data and are ignored by Git. Check the backup command succeeded before proceeding. A backup should be restored into a separate database to verify it before relying on it for recovery.
 
