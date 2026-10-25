@@ -32,7 +32,7 @@ curl -X POST http://localhost:8000/api/v1/workflows \
 The response is HTTP 202 with a workflow ID. Use GET `/api/v1/workflows/{id}` with the same header to read progress. Interactive API documentation: `http://localhost:8000/docs`.
 
 ## Security and deployment boundaries
-- Validation status: backend tests (5) and local SQLite workflow smoke test passed; Docker Compose and frontend build were not fully runnable in the authoring environment.
+- Validation status (25 October 2026): all 25 backend tests passed locally and in an isolated API container; the frontend production build passed. All five Compose services were running, with PostgreSQL and Redis healthy. An isolated SQLite workflow smoke test passed. Browser-to-PostgreSQL execution still needs an end-to-end acceptance check.
 
 - **Do not expose this prototype publicly or deploy it to production.** The single shared API key is development-only; there is no per-user RBAC, workspace isolation, login, CSRF policy, token rotation or rate limiting.
 - Frontend stores the development API key in browser localStorage, suitable only for a personal local demo; replace with server-backed sessions before shared deployment.

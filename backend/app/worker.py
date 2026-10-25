@@ -62,14 +62,25 @@ def tick() -> bool:
     return True
 
 
+def recover_running_tasks():
+    # Only active workflows may resume pure CSV tasks after the sole worker restarts.
+    with SessionLocal.begin() as db:
+        stuck = db.execute(select(Task, Workflow).join(Workflow, Task.workflow_id == Workflow.id)
+                           .where(Task.status == "running").with_for_update()).all()
+        for task, workflow in stuck:
+            if workflow.status in ("queued", "running"):
+                task.status = "pending"
+                kind = "task_requeued_after_restart"
+            else:
+                task.status = "cancelled"
+                kind = "task_cancelled"
+            db.add(Event(workflow_id=task.workflow_id, kind=kind,
+                         details={"task": task.name, "reason": "worker_restart"}))
+
+
 def main():
     Base.metadata.create_all(engine)
-    # Recover tasks that were executing when the sole worker crashed. Pure CSV agents are safe to repeat.
-    with SessionLocal.begin() as db:
-        stuck = db.scalars(select(Task).where(Task.status == "running")).all()
-        for task in stuck:
-            task.status = "pending"
-            db.add(Event(workflow_id=task.workflow_id, kind="task_requeued_after_restart", details={"task": task.name}))
+    recover_running_tasks()
     while True:
         try:
             if not tick(): time.sleep(1)
