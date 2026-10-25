@@ -10,7 +10,9 @@ type Workspace = {id: string; name: string; role: Role};
 type Member = {user_id: string; email: string; role: Role};
 type Task = {id: string; name: string; agent: string; status: string; attempts: number; capability: string; agent_version: string; schema_version: string; error_code: string | null; execution: {request_id: string; schema_version: string; status: string} | null};
 type Agent = {id: string; version: string; capabilities: string[]; enabled: boolean; availability: 'ready' | 'offline' | 'disabled'; available_workers: number; last_seen_at: string | null};
-type Workflow = {id: string; workspace_id: string; prompt: string; status: string; tasks: Task[]; output: unknown; error: string | null};
+type Planning = {provider?: string; model?: string | null; status: string; accounted_tokens?: number; accounted_cost_usd?: string; max_cost_usd?: string; error_code?: string | null; attempts: {number: number; status: string; input_tokens: number | null; output_tokens: number | null}[]};
+type PlannerConfiguration = {llm_available: boolean; model: string | null; provider: string | null; max_attempts: number; max_tokens: number; max_cost_usd: number; max_deadline_seconds: number};
+type Workflow = {id: string; workspace_id: string; prompt: string; status: string; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
 const demoCSV = 'product,sales,units\nFrames,2400,12\nSunglasses,1800,9\nLenses,1200,20';
@@ -105,6 +107,11 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [plannerConfiguration, setPlannerConfiguration] = useState<PlannerConfiguration | null>(null);
+  const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
+  const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
+  const [planningTokenLimit, setPlanningTokenLimit] = useState('20000');
+  const [planningDeadline, setPlanningDeadline] = useState('60');
   const [workspaceName, setWorkspaceName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'member' | 'viewer'>('viewer');
@@ -136,6 +143,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const roster = await request<Agent[]>('/agents', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setAgents(roster);
+        const policy = await request<PlannerConfiguration>('/planner/config', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setPlannerConfiguration(policy);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -156,8 +166,8 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   };
   const mutate = <T,>(path: string, body?: unknown, method = 'POST') => request<T>(path, {method, signal: actionController.current.signal, ...(body ? {body: JSON.stringify(body)} : {})}, session.csrf_token);
   const create = () => action(async () => {
-    if (!workspace || !canWrite) return;
-    const data = await mutate<{workflow_id: string}>('/workflows', {workspace_id: workspace.id, prompt, csv_text: csv});
+    if (!workspace || !canWrite || (plannerMode === 'llm' && !plannerConfiguration?.llm_available)) return;
+    const data = await mutate<{workflow_id: string}>('/workflows', {workspace_id: workspace.id, prompt, csv_text: csv, planner_mode: plannerMode, ...(plannerMode === 'llm' ? {planning_max_tokens: Number(planningTokenLimit), planning_max_cost_usd: Number(planningCostLimit), planning_deadline_seconds: Number(planningDeadline)} : {})});
     setWorkflow(null); setEvents([]); setSelected(data.workflow_id);
   });
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
@@ -173,7 +183,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 04 · Local development</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 05 · Local development</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -181,24 +191,33 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       <div className="cards">{[
         ['RECENT WORKFLOWS', runs.length, 'Latest 50 in this workspace'],
         ['COMPLETED', runs.filter(w => w.status === 'succeeded').length, 'Verified end-to-end'],
-        ['RUNNING', runs.filter(w => ['running', 'queued'].includes(w.status)).length, 'Active pipeline'],
+        ['RUNNING', runs.filter(w => ['running', 'queued', 'planning'].includes(w.status)).length, 'Active pipeline'],
         ['FAILED', runs.filter(w => w.status === 'failed').length, 'Review execution logs']
       ].map(([label, value, description]) => <div className="metric" key={label}><small>{label}</small><b>{value}</b><span>{description}</span></div>)}</div>
       <div className="columns"><section className="panel"><div className="panel-head"><div><div className="eyebrow">01 / INPUT</div><h2>Launch a workflow</h2></div><Play size={18}/></div>
         <form onSubmit={e => {e.preventDefault(); create();}}>
+          <label htmlFor="planner-mode">Planning mode</label><select id="planner-mode" value={plannerMode} onChange={e => setPlannerMode(e.target.value as 'offline' | 'llm')} disabled={!canWrite || busy}>
+            <option value="offline">Offline pipeline · No provider calls</option><option value="llm" disabled={!plannerConfiguration?.llm_available}>{plannerConfiguration?.llm_available ? `OpenAI planner · ${plannerConfiguration.model}` : 'OpenAI planner · Not configured'}</option>
+          </select>
+          {plannerMode === 'llm' && <><p className="helper">Sends task instructions and CSV column names to OpenAI. CSV rows stay local. Only registered CSV agents run after plan validation.</p><div className="planning-budget">
+            <div><label htmlFor="planning-cost">Max planning cost (USD)</label><input id="planning-cost" type="number" required min="0.000001" max={plannerConfiguration?.max_cost_usd || 1} step="any" value={planningCostLimit} onChange={e => setPlanningCostLimit(e.target.value)} disabled={busy || !canWrite}/></div>
+            <div><label htmlFor="planning-tokens">Planning token budget</label><input id="planning-tokens" type="number" required min="512" max={plannerConfiguration?.max_tokens || 64000} step="1" value={planningTokenLimit} onChange={e => setPlanningTokenLimit(e.target.value)} disabled={busy || !canWrite}/></div>
+            <div><label htmlFor="planning-deadline">Planning deadline (seconds)</label><input id="planning-deadline" type="number" required min="5" max={plannerConfiguration?.max_deadline_seconds || 180} step="1" value={planningDeadline} onChange={e => setPlanningDeadline(e.target.value)} disabled={busy || !canWrite}/></div>
+          </div><p className="helper">At most two provider calls, including one repair. Cost estimates use operator-configured prices. An in-flight call may still be charged if you cancel.</p></>}
           <label htmlFor="prompt">Task instructions</label><textarea id="prompt" required minLength={3} rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={3000} disabled={!canWrite}/>
           <label htmlFor="csv">Dataset (CSV text)</label><textarea id="csv" required minLength={3} maxLength={250000} className="code-input" rows={6} value={csv} onChange={e => setCSV(e.target.value)} disabled={!canWrite}/>
-          <div className="helper">{canWrite ? hasDisabledAgent ? 'A required agent is disabled. Ask your operator to enable it before starting a workflow.' : 'Demo pipeline: inspect CSV → summarize → verify. No LLM key required.' : 'Viewer access lets you inspect workflows. Ask the owner for member access to run one.'}</div>
-          <button className="primary" disabled={!canWrite || busy || hasDisabledAgent}>{busy ? 'Please wait…' : 'Execute workflow'} <Play size={16}/></button>
+          <div className="helper">{canWrite ? hasDisabledAgent ? 'A required agent is disabled. Ask your operator to enable it before starting a workflow.' : plannerMode === 'offline' ? 'Demo pipeline: inspect CSV → summarize → verify. No LLM key required.' : 'The planner proposes a DAG; registered CSV agents execute and verify it locally.' : 'Viewer access lets you inspect workflows. Ask the owner for member access to run one.'}</div>
+          <button className="primary" disabled={!canWrite || busy || hasDisabledAgent || (plannerMode === 'llm' && !plannerConfiguration?.llm_available)}>{busy ? 'Please wait…' : plannerMode === 'llm' ? 'Plan and execute' : 'Execute workflow'} <Play size={16}/></button>
         </form>
       </section>
       <section className="panel results"><div className="panel-head"><div><div className="eyebrow">02 / EXECUTION</div><h2>Agent execution graph</h2></div><button className="iconbutton" aria-label="Refresh workflows" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={17}/></button></div>
         {!workflow ? <div className="empty">Submit or select a workflow to view its execution.</div> : <>
-          <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{succeeded} / {workflow.tasks.length} tasks completed</span></div>
-          <div className="track"><div style={{width: `${succeeded / workflow.tasks.length * 100}%`}}/></div>
-          <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · attempts {t.attempts}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>
+          <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{workflow.tasks.length ? `${succeeded} / ${workflow.tasks.length} tasks completed` : 'Awaiting validated plan'}</span></div>
+          <div className="track"><div style={{width: `${workflow.tasks.length ? succeeded / workflow.tasks.length * 100 : 0}%`}}/></div>
+          {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : 'No executable plan was accepted.'}</div> : <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · attempts {t.attempts}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>}
+          {workflow.planning && <div className="planning-summary"><strong>{workflow.planning.provider === 'offline' ? 'Offline pipeline' : `OpenAI planning · ${workflow.planning.model || 'configured model'}`}</strong><span>Planning: {workflow.planning.status} · {workflow.planning.attempts.length} provider {workflow.planning.attempts.length === 1 ? 'call' : 'calls'}</span><span>{workflow.planning.accounted_tokens || 0} accounted tokens · Estimated cost ${Number(workflow.planning.accounted_cost_usd || 0).toFixed(6)}</span>{workflow.planning.attempts.some(attempt => ['reserved', 'indeterminate'].includes(attempt.status)) && <span className="helper">A reservation is retained because usage is pending or uncertain.</span>}{workflow.planning.error_code && <span className="error">{workflow.planning.error_code}</span>}</div>}
           {workflow.error && <p role="alert" className="error">{workflow.error}</p>}
-          {canWrite && ['running', 'queued'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
+          {canWrite && ['running', 'queued', 'planning'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
         </>}
       </section></div>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
@@ -211,6 +230,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         </article>)}</div>}
         {agents.some(agent => agent.availability === 'offline') && <p className="helper">Offline agents have no recent compatible worker heartbeat. Submitted workflows wait for a worker.</p>}
       </section>
+      {workflow?.plan && <details className="panel lower execution-contracts"><summary>Validated execution plan</summary><p className="helper">Final task: {workflow.plan.final_task_id}. Every task contributes to this verified result.</p><pre className="output">{JSON.stringify(workflow.plan, null, 2)}</pre></details>}
       {workflow && <details className="panel lower execution-contracts"><summary>Execution contracts</summary><p className="helper">Versions and request IDs for the selected workflow.</p>{workflow.tasks.map(task => <div className="protocol-row" key={task.id}>
         <strong>{task.name}</strong><code>{task.capability || 'Legacy capability'} · agent {task.agent_version} · protocol {task.schema_version}</code>
         <small>{task.execution ? `Request ${task.execution.request_id}` : 'No versioned result recorded'}</small>{task.error_code && <span className="error">{task.error_code}</span>}

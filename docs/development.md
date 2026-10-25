@@ -41,6 +41,8 @@ For deliberate transitive updates, add `--upgrade` and review the resulting vers
 
 ## CI
 
-GitHub Actions runs on pushes and pull requests. Backend checks include Ruff lint/format, Mypy, a contract-schema drift check, the SQLite suite, and migration/API/agent-runtime integration against PostgreSQL 16. The frontend job installs from its lockfile and builds the production bundle. A failed check or test fails its job. Repository administrators can require these checks through GitHub branch protection.
+GitHub Actions runs on pushes and pull requests. Backend checks include Ruff lint/format, Mypy, a contract-schema drift check, the SQLite suite, and migration/API/agent-runtime/planning integration against PostgreSQL 16. The frontend job installs from its lockfile and builds the production bundle. A failed check or test fails its job. Repository administrators can require these checks through GitHub branch protection.
 
 `TEST_DATABASE_URL` is exclusively for disposable test databases: migration tests drop their tables. CI provisions its own PostgreSQL service. The normal development database is not used by the integration fixture unless this variable is explicitly pointed at it.
+
+The planning suite uses mocked HTTP and replay providers; it does not need an API key or make paid calls. The 20-case corpus tests graph acceptance/rejection and bounded repair, not live-model quality. See [LLM planning](llm-planning.md) for explicit opt-in configuration and budget limitations.
