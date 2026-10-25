@@ -52,11 +52,33 @@ def summarize_csv(csv_text: str, inputs: dict[str, Any]) -> dict:
     return result
 
 def verify_result(csv_text: str, inputs: dict[str, Any]) -> dict:
-    inspected, summary = inputs["inspect"], inputs["summarize"]
-    passed = inspected["row_count"] == summary["row_count"] and inspected["columns"] == summary["columns"]
-    for col, stats in summary["numeric_columns"].items():
-        if not (stats["min"] <= stats["mean"] <= stats["max"]): passed = False
-    if not passed: raise AgentError("Verification failed")
-    return {"passed": True, "checks": ["row count matches", "column schema matches", "numeric ranges valid"], "summary": summary}
+    # Re-read the source and calculate expectations independently of upstream outputs.
+    source = inspect_csv(csv_text, {})
+    summary = inputs["summarize"]
+    expected = {"row_count": source["row_count"], "columns": source["columns"], "numeric_columns": {}}
+    for column in source["columns"]:
+        values = []
+        for row in source["rows"]:
+            raw = (row.get(column) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = Decimal(raw)
+            except (InvalidOperation, ValueError):
+                values = []
+                break
+            if not value.is_finite() or not math.isfinite(float(value)):
+                raise AgentError("Verification failed: nonfinite source value")
+            values.append(value)
+        if values:
+            total = sum(values)
+            stats = dict(count=len(values), sum=float(total), mean=float(total / len(values)),
+                         min=float(min(values)), max=float(max(values)))
+            if not all(math.isfinite(value) for value in stats.values()):
+                raise AgentError("Verification failed: nonfinite numeric summary")
+            expected["numeric_columns"][column] = stats
+    if summary != expected:
+        raise AgentError("Verification failed: summary does not match source CSV")
+    return {"passed": True, "checks": ["row count matches source", "column schema matches source", "numeric columns match source", "numeric counts, sums, means and ranges recalculated"], "summary": summary}
 
 AGENTS: dict[str, Callable] = {"csv_inspector": inspect_csv, "csv_summarizer": summarize_csv, "result_verifier": verify_result}
