@@ -12,6 +12,7 @@ from .dispatch import dispatch
 from .heartbeats import HEARTBEAT_INTERVAL, record_heartbeat
 from .migrate import require_current_schema
 from .models import Event, Task, Workflow
+from .planning_runtime import claim_planning, recover_planning, run_planning
 from .registry import REGISTRY, RegistryError
 
 logging.basicConfig(level=logging.INFO)
@@ -73,6 +74,10 @@ def fail_workflow(db: Session, workflow: Workflow, tasks: list[Task], error: Age
 
 def tick() -> bool:
     # One worker only; heartbeat records do not replace task leases.
+    planning_id = claim_planning(SessionLocal)
+    if planning_id is not None:
+        run_planning(planning_id, SessionLocal)
+        return True
     request = None
     failure = None
     with SessionLocal.begin() as db:
@@ -105,7 +110,24 @@ def tick() -> bool:
             )
             return True
         if tasks and all(task.status == "succeeded" for task in tasks):
-            workflow.status, workflow.output = "succeeded", tasks[-1].result
+            final_name = (
+                workflow.execution_plan.get("final_task_id")
+                if workflow.execution_plan
+                else tasks[-1].name
+            )
+            if final_name not in by_name:
+                fail_workflow(
+                    db,
+                    workflow,
+                    tasks,
+                    AgentFailure(
+                        code="invalid_input",
+                        stage="input",
+                        message="Workflow final task is unavailable",
+                    ),
+                )
+                return True
+            workflow.status, workflow.output = "succeeded", by_name[final_name].result
             db.add(Event(workflow_id=workflow.id, kind="workflow_succeeded"))
             return True
         ready = next(
@@ -237,6 +259,7 @@ def recover_running_tasks():
 
 def main():
     require_current_schema()
+    recover_planning(SessionLocal)
     recover_running_tasks()
     next_heartbeat = 0.0
     while True:

@@ -24,6 +24,8 @@ class Workflow(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     mode: Mapped[str] = mapped_column(String(32), default="csv_demo")
     input_csv: Mapped[str] = mapped_column(Text, default="")
+    planning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    execution_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

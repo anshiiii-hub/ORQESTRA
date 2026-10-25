@@ -3,10 +3,13 @@ import json
 import os
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from copy import deepcopy
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,9 +19,12 @@ from .auth import router as auth_router
 from .db import SessionLocal, get_db
 from .export_contracts import schemas
 from .heartbeats import agent_catalog
+from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import Event, Membership, Task, Workflow
 from .planner import demo_plan
+from .planning import PlannerProposal
+from .planning_runtime import add_tasks, initial_state
 from .workspaces import router as workspace_router
 
 
@@ -28,7 +34,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -38,6 +44,24 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(workspace_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_validation_errors(request: Request, error: RequestValidationError):
+    # Do not echo credentials, raw payloads, or nonfinite JSON values in error responses.
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [
+                {
+                    "loc": [str(part)[:64] for part in item["loc"]],
+                    "msg": item["msg"][:200],
+                    "type": item["type"],
+                }
+                for item in error.errors()[:20]
+            ]
+        },
+    )
 
 
 @app.middleware("http")
@@ -53,6 +77,10 @@ class CreateWorkflow(BaseModel):
     workspace_id: str = Field(min_length=1, max_length=36)
     prompt: str = Field(min_length=3, max_length=3000)
     csv_text: str = Field(min_length=3, max_length=250000)
+    planner_mode: Literal["offline", "llm"] = "offline"
+    planning_max_tokens: int = Field(default=20000, ge=512, le=64000, strict=True)
+    planning_max_cost_usd: float = Field(default=0.05, gt=0, le=1, allow_inf_nan=False, strict=True)
+    planning_deadline_seconds: int = Field(default=60, ge=5, le=180, strict=True)
 
 
 def event(db, wid, kind, details=None):
@@ -88,6 +116,8 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
         "mode": w.mode,
         "output": w.output,
         "error": w.error,
+        "planning": w.planning,
+        "plan": w.execution_plan,
         "created_at": w.created_at.isoformat() if w.created_at else None,
         "tasks": [
             {
@@ -112,7 +142,32 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.4.0"}
+    return {"status": "ok", "version": "0.5.0"}
+
+
+@app.get("/api/v1/planner/config")
+def planner_configuration(identity: Identity = Depends(current_identity)):
+    try:
+        settings = planner_settings()
+        return {
+            "llm_available": settings.enabled,
+            "model": settings.model if settings.enabled else None,
+            "provider": "openai" if settings.enabled else None,
+            "max_attempts": 2,
+            "max_tokens": 64000,
+            "max_cost_usd": 1,
+            "max_deadline_seconds": 180,
+        }
+    except PlanningError:
+        return {
+            "llm_available": False,
+            "model": None,
+            "provider": None,
+            "max_attempts": 2,
+            "max_tokens": 64000,
+            "max_cost_usd": 1,
+            "max_deadline_seconds": 180,
+        }
 
 
 @app.get("/api/v1/agents")
@@ -138,34 +193,53 @@ def create_workflow(
         plan = demo_plan()
     except ValidationError:
         raise HTTPException(503, "Required demo agents are unavailable") from None
+    settings = None
+    if body.planner_mode == "llm":
+        try:
+            settings = planner_settings()
+            if not settings.enabled:
+                raise PlanningError("provider_not_configured", "LLM planning is not configured")
+        except PlanningError:
+            raise HTTPException(503, "LLM planning is not configured") from None
     w = Workflow(
         prompt=body.prompt,
         input_csv=body.csv_text,
         status="queued",
         workspace_id=body.workspace_id,
         created_by=identity.user.id,
+        mode="csv_llm_plan" if settings else "csv_demo",
     )
     db.add(w)
     db.flush()
-    for i, p in enumerate(plan.tasks):
-        db.add(
-            Task(
-                workflow_id=w.id,
-                name=p.id,
-                agent=p.agent,
-                dependencies=p.dependencies,
-                ordinal=i,
-                capability=p.capability,
-                agent_version=p.agent_version,
-                schema_version=p.schema_version,
-                input_bindings=p.input_bindings,
-            )
+    if settings:
+        w.planning = initial_state(
+            settings,
+            body.planning_max_tokens,
+            body.planning_max_cost_usd,
+            body.planning_deadline_seconds,
         )
+    else:
+        add_tasks(
+            db, w, PlannerProposal(schema_version="1.0", tasks=plan.tasks, final_task_id="verify")
+        )
+        w.planning = {
+            "schema_version": "1.0",
+            "provider": "offline",
+            "model": None,
+            "status": "succeeded",
+            "attempts": [],
+            "accounted_tokens": 0,
+            "accounted_cost_usd": "0",
+            "error_code": None,
+        }
     event(
         db,
         w.id,
         "workflow_created",
-        {"task_count": len(plan.tasks), "planner": "deterministic_demo"},
+        {
+            "task_count": 0 if settings else len(plan.tasks),
+            "planner": "openai" if settings else "offline",
+        },
     )
     db.commit()
     return {"workflow_id": w.id, "status": w.status, "url": f"/api/v1/workflows/{w.id}"}
@@ -201,6 +275,14 @@ def get_workflow(
     return serialize(w, tasks)
 
 
+@app.get("/api/v1/workflows/{wid}/plan")
+def get_workflow_plan(
+    wid: str, identity: Identity = Depends(current_identity), db: Session = Depends(get_db)
+):
+    workflow = visible_workflow(db, wid, identity)
+    return {"workflow_id": wid, "planning": workflow.planning, "plan": workflow.execution_plan}
+
+
 @app.post("/api/v1/workflows/{wid}/cancel")
 def cancel_workflow(
     wid: str, identity: Identity = Depends(current_identity), db: Session = Depends(get_db)
@@ -209,6 +291,10 @@ def cancel_workflow(
     if w.status in ("succeeded", "failed", "cancelled"):
         raise HTTPException(409, "Workflow already terminal")
     w.status = "cancelled"
+    if w.planning and w.planning.get("status") in ("pending", "running"):
+        state = deepcopy(w.planning)
+        state["status"] = "cancelled"
+        w.planning = state
     for t in db.scalars(select(Task).where(Task.workflow_id == wid, Task.status == "pending")):
         t.status = "cancelled"
     event(db, wid, "workflow_cancelled")

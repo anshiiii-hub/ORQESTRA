@@ -1,3 +1,11 @@
+x-planner-environment: &planner-environment
+  LLM_PLANNER_ENABLED: ${LLM_PLANNER_ENABLED:-false}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+  LLM_INPUT_PRICE_PER_MILLION: ${LLM_INPUT_PRICE_PER_MILLION:-}
+  LLM_OUTPUT_PRICE_PER_MILLION: ${LLM_OUTPUT_PRICE_PER_MILLION:-}
+  LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2048}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -28,6 +36,7 @@ services:
   api:
     build: ./backend
     environment:
+      <<: *planner-environment
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
       REDIS_URL: redis://redis:6379/0
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
@@ -44,6 +53,7 @@ services:
     build: ./backend
     command: ["python", "-m", "app.worker"]
     environment:
+      <<: *planner-environment
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
       REDIS_URL: redis://redis:6379/0
       DISABLED_AGENTS: ${DISABLED_AGENTS:-}

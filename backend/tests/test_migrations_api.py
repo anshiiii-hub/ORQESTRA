@@ -123,10 +123,20 @@ def test_contract_migration_backfills_and_resumes_existing_queue(migrated_databa
     engine, sessions, config = migrated_database
     command.downgrade(config, "0002")
     old_tasks = Table("tasks", MetaData(), autoload_with=engine)
+    old_workflows = Table("workflows", MetaData(), autoload_with=engine)
+    wid = "pre-contract-workflow"
     with sessions.begin() as db:
-        workflow = Workflow(prompt="Existing queued workflow", input_csv="item,sales\nA,10\nB,20")
-        db.add(workflow)
-        db.flush()
+        db.execute(
+            old_workflows.insert().values(
+                id=wid,
+                prompt="Existing queued workflow",
+                input_csv="item,sales\nA,10\nB,20",
+                status="queued",
+                mode="csv_demo",
+                created_at=now(),
+                updated_at=now(),
+            )
+        )
         for index, (name, agent, dependencies) in enumerate(
             [
                 ("inspect", "csv_inspector", []),
@@ -137,7 +147,7 @@ def test_contract_migration_backfills_and_resumes_existing_queue(migrated_databa
             db.execute(
                 old_tasks.insert().values(
                     id=f"old-task-{index}",
-                    workflow_id=workflow.id,
+                    workflow_id=wid,
                     name=name,
                     agent=agent,
                     dependencies=dependencies,
@@ -157,7 +167,5 @@ def test_contract_migration_backfills_and_resumes_existing_queue(migrated_databa
     for _ in range(4):
         worker.tick()
     with sessions() as db:
-        assert db.get(Workflow, workflow.id).status == "succeeded"
-        assert (
-            db.get(Workflow, workflow.id).output["summary"]["numeric_columns"]["sales"]["sum"] == 30
-        )
+        assert db.get(Workflow, wid).status == "succeeded"
+        assert db.get(Workflow, wid).output["summary"]["numeric_columns"]["sales"]["sum"] == 30
