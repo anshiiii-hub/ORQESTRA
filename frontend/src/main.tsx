@@ -8,7 +8,8 @@ type Role = 'owner' | 'member' | 'viewer';
 type Session = {user: {id: string; email: string}; csrf_token: string};
 type Workspace = {id: string; name: string; role: Role};
 type Member = {user_id: string; email: string; role: Role};
-type Task = {id: string; name: string; agent: string; status: string; attempts: number};
+type Task = {id: string; name: string; agent: string; status: string; attempts: number; capability: string; agent_version: string; schema_version: string; error_code: string | null; execution: {request_id: string; schema_version: string; status: string} | null};
+type Agent = {id: string; version: string; capabilities: string[]; enabled: boolean; availability: 'ready' | 'offline' | 'disabled'; available_workers: number; last_seen_at: string | null};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; tasks: Task[]; output: unknown; error: string | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -103,6 +104,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [workspaceName, setWorkspaceName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'member' | 'viewer'>('viewer');
@@ -131,6 +133,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const people = workspace.role === 'owner' ? await request<Member[]>(`/workspaces/${workspace.id}/members`, {signal: controller.signal}) : [];
         if (controller.signal.aborted) return;
         setRuns(list); setMembers(people);
+        const roster = await request<Agent[]>('/agents', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setAgents(roster);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -155,6 +160,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     const data = await mutate<{workflow_id: string}>('/workflows', {workspace_id: workspace.id, prompt, csv_text: csv});
     setWorkflow(null); setEvents([]); setSelected(data.workflow_id);
   });
+  const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
   return <div className="shell">
     <aside className="sidebar"><Brand/>
@@ -167,7 +173,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 03 · Local development</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 04 · Local development</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -182,22 +188,34 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         <form onSubmit={e => {e.preventDefault(); create();}}>
           <label htmlFor="prompt">Task instructions</label><textarea id="prompt" required minLength={3} rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={3000} disabled={!canWrite}/>
           <label htmlFor="csv">Dataset (CSV text)</label><textarea id="csv" required minLength={3} maxLength={250000} className="code-input" rows={6} value={csv} onChange={e => setCSV(e.target.value)} disabled={!canWrite}/>
-          <div className="helper">{canWrite ? 'Demo pipeline: inspect CSV → summarize → verify. No LLM key required.' : 'Viewer access lets you inspect workflows. Ask the owner for member access to run one.'}</div>
-          <button className="primary" disabled={!canWrite || busy}>{busy ? 'Please wait…' : 'Execute workflow'} <Play size={16}/></button>
+          <div className="helper">{canWrite ? hasDisabledAgent ? 'A required agent is disabled. Ask your operator to enable it before starting a workflow.' : 'Demo pipeline: inspect CSV → summarize → verify. No LLM key required.' : 'Viewer access lets you inspect workflows. Ask the owner for member access to run one.'}</div>
+          <button className="primary" disabled={!canWrite || busy || hasDisabledAgent}>{busy ? 'Please wait…' : 'Execute workflow'} <Play size={16}/></button>
         </form>
       </section>
       <section className="panel results"><div className="panel-head"><div><div className="eyebrow">02 / EXECUTION</div><h2>Agent execution graph</h2></div><button className="iconbutton" aria-label="Refresh workflows" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={17}/></button></div>
         {!workflow ? <div className="empty">Submit or select a workflow to view its execution.</div> : <>
           <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{succeeded} / {workflow.tasks.length} tasks completed</span></div>
           <div className="track"><div style={{width: `${succeeded / workflow.tasks.length * 100}%`}}/></div>
-          <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · attempts {t.attempts}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>
+          <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · attempts {t.attempts}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>
           {workflow.error && <p role="alert" className="error">{workflow.error}</p>}
           {canWrite && ['running', 'queued'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
         </>}
       </section></div>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>
-      {workspace.role === 'owner' && <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">05 / WORKSPACE</div><h2>Manage members</h2></div><Users size={18}/></div>
+      <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">05 / CAPABILITIES</div><h2>Agent registry</h2></div><BrainCircuit size={18}/></div>
+        <p className="helper">Built-in CSV agents · Protocol 1.0 · Worker status updates automatically.</p>
+        {agents.length === 0 ? <p className="muted">Loading agent availability…</p> : <div className="agent-catalog">{agents.map(agent => <article className="agent-card" key={agent.id}>
+          <div className="agent-card-head"><strong>{({'csv_inspector': 'CSV inspection', 'csv_summarizer': 'Numeric summary', 'result_verifier': 'Result verification'} as Record<string, string>)[agent.id] || agent.id}</strong><span className={`availability ${agent.availability}`}>{agent.availability}</span></div>
+          <code>{agent.capabilities.join(', ')}</code><small>Version {agent.version} · {agent.available_workers} compatible {agent.available_workers === 1 ? 'worker' : 'workers'}</small>
+        </article>)}</div>}
+        {agents.some(agent => agent.availability === 'offline') && <p className="helper">Offline agents have no recent compatible worker heartbeat. Submitted workflows wait for a worker.</p>}
+      </section>
+      {workflow && <details className="panel lower execution-contracts"><summary>Execution contracts</summary><p className="helper">Versions and request IDs for the selected workflow.</p>{workflow.tasks.map(task => <div className="protocol-row" key={task.id}>
+        <strong>{task.name}</strong><code>{task.capability || 'Legacy capability'} · agent {task.agent_version} · protocol {task.schema_version}</code>
+        <small>{task.execution ? `Request ${task.execution.request_id}` : 'No versioned result recorded'}</small>{task.error_code && <span className="error">{task.error_code}</span>}
+      </div>)}</details>}
+      {workspace.role === 'owner' && <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">06 / WORKSPACE</div><h2>Manage members</h2></div><Users size={18}/></div>
         <form className="member-form" onSubmit={e => {e.preventDefault(); action(async () => {await mutate(`/workspaces/${workspace.id}/members`, {email: memberEmail, role: memberRole}); setMemberEmail('');});}}>
           <div><label htmlFor="member-email">Registered user’s email</label><input id="member-email" type="email" required value={memberEmail} onChange={e => setMemberEmail(e.target.value)}/></div>
           <div><label htmlFor="member-role">Role</label><select id="member-role" value={memberRole} onChange={e => setMemberRole(e.target.value as 'member' | 'viewer')}><option value="viewer">Viewer</option><option value="member">Member</option></select></div>

@@ -18,7 +18,7 @@ A request explicitly identifies `schema_version`, `request_id`, `workflow_id`, `
 
 A result repeats the request's identity and version fields. It includes status, summary, structured output, source references, usage, warnings, and a typed error. Success requires validated output and no error. Failure requires an error and cannot publish output or artifacts. IDs, versions, schemas, finite numbers, row/column consistency, and source references are checked before success can be saved. The verifier separately recalculates arithmetic from the source CSV.
 
-Failures carry a code, stage, retryable flag, and bounded safe message. Raw exception messages and invalid outputs are not copied into result envelopes or events. Current deterministic agents have zero model token/cost usage. No automatic retries are added in this checkpoint.
+Failures carry a code, stage, retryable flag, and bounded safe message. Raw exception messages and invalid outputs are not copied into result envelopes or events. Current deterministic agents have zero model token/cost usage. No automatic retries are added in this checkpoint. Task rows retain the latest request/result envelopes; separate per-attempt history is planned for the scheduler checkpoint. Started/succeeded events retain their request IDs.
 
 ## Planning and dispatch
 
