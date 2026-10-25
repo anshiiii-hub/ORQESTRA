@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orchestra
+      POSTGRES_USER: orchestra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev_only_change_me}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestra -d orchestra"]
+      interval: 5s
+      retries: 15
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 15
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
+      REDIS_URL: redis://redis:6379/0
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      API_KEY: ${API_KEY:-local-dev-key-change-before-exposure}
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports: ["127.0.0.1:5173:5173"]
+    depends_on: [api]
+volumes:
+  postgres_data:
+  redis_data:
