@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "NumericStatistics": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "max": {
+          "title": "Max",
+          "type": "number"
+        },
+        "mean": {
+          "title": "Mean",
+          "type": "number"
+        },
+        "min": {
+          "title": "Min",
+          "type": "number"
+        },
+        "sum": {
+          "title": "Sum",
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "sum",
+        "mean",
+        "min",
+        "max"
+      ],
+      "title": "NumericStatistics",
+      "type": "object"
+    },
+    "SummaryOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "minItems": 1,
+          "title": "Columns",
+          "type": "array"
+        },
+        "numeric_columns": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NumericStatistics"
+          },
+          "title": "Numeric Columns",
+          "type": "object"
+        },
+        "row_count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row_count",
+        "columns",
+        "numeric_columns"
+      ],
+      "title": "SummaryOutput",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "checks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    },
+    "passed": {
+      "const": true,
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "summary": {
+      "$ref": "#/$defs/SummaryOutput"
+    }
+  },
+  "required": [
+    "passed",
+    "checks",
+    "summary"
+  ],
+  "title": "VerificationOutput",
+  "type": "object"
+}

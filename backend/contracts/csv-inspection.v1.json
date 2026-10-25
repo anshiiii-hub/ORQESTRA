@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 40,
+      "minItems": 1,
+      "title": "Columns",
+      "type": "array"
+    },
+    "row_count": {
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Row Count",
+      "type": "integer"
+    },
+    "rows": {
+      "items": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": "object"
+      },
+      "maxItems": 1000,
+      "minItems": 1,
+      "title": "Rows",
+      "type": "array"
+    }
+  },
+  "required": [
+    "row_count",
+    "columns",
+    "rows"
+  ],
+  "title": "InspectionOutput",
+  "type": "object"
+}

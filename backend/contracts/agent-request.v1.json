@@ -1,0 +1,298 @@
+{
+  "$defs": {
+    "CSVInput": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/TaskContext"
+        },
+        "csv_text": {
+          "maxLength": 250000,
+          "minLength": 3,
+          "title": "Csv Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "csv_text"
+      ],
+      "title": "CSVInput",
+      "type": "object"
+    },
+    "Constraints": {
+      "additionalProperties": false,
+      "properties": {
+        "max_output_bytes": {
+          "default": 1000000,
+          "maximum": 2000000,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "timeout_seconds": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "title": "Constraints",
+      "type": "object"
+    },
+    "InspectionOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "minItems": 1,
+          "title": "Columns",
+          "type": "array"
+        },
+        "row_count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Rows",
+          "type": "array"
+        }
+      },
+      "required": [
+        "row_count",
+        "columns",
+        "rows"
+      ],
+      "title": "InspectionOutput",
+      "type": "object"
+    },
+    "NumericStatistics": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "max": {
+          "title": "Max",
+          "type": "number"
+        },
+        "mean": {
+          "title": "Mean",
+          "type": "number"
+        },
+        "min": {
+          "title": "Min",
+          "type": "number"
+        },
+        "sum": {
+          "title": "Sum",
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "sum",
+        "mean",
+        "min",
+        "max"
+      ],
+      "title": "NumericStatistics",
+      "type": "object"
+    },
+    "SummaryOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "minItems": 1,
+          "title": "Columns",
+          "type": "array"
+        },
+        "numeric_columns": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NumericStatistics"
+          },
+          "title": "Numeric Columns",
+          "type": "object"
+        },
+        "row_count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row_count",
+        "columns",
+        "numeric_columns"
+      ],
+      "title": "SummaryOutput",
+      "type": "object"
+    },
+    "TaskContext": {
+      "additionalProperties": false,
+      "properties": {
+        "inspect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectionOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "summarize": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SummaryOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "TaskContext",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agent_type": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "agent_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "capability": {
+      "enum": [
+        "csv.inspect",
+        "csv.summarize",
+        "result.verify"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "constraints": {
+      "$ref": "#/$defs/Constraints"
+    },
+    "context_refs": {
+      "additionalProperties": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "type": "string"
+      },
+      "maxProperties": 25,
+      "title": "Context Refs",
+      "type": "object"
+    },
+    "input_artifact_ids": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Input Artifact Ids",
+      "type": "array"
+    },
+    "objective": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Objective",
+      "type": "string"
+    },
+    "payload": {
+      "$ref": "#/$defs/CSVInput"
+    },
+    "request_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "tool_permissions": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Tool Permissions",
+      "type": "array"
+    },
+    "workflow_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "workflow_id",
+    "task_id",
+    "agent_type",
+    "capability",
+    "objective",
+    "payload"
+  ],
+  "title": "AgentRequest",
+  "type": "object"
+}
