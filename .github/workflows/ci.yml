@@ -39,8 +39,8 @@ jobs:
       - run: ruff format --check .
       - run: mypy
       - run: pytest -q
-      - name: PostgreSQL migrations and API integration
-        run: pytest -q tests/test_migrations_api.py
+      - name: PostgreSQL migrations, API and access control
+        run: pytest -q tests/test_migrations_api.py tests/test_auth_rbac.py
         env:
           TEST_DATABASE_URL: postgresql+psycopg://orqestra_test:disposable_ci_password@localhost:5432/orqestra_test
 

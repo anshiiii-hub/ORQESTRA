@@ -1,19 +1,23 @@
 import asyncio
+import json
 import os
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import get_db
+from .auth import Identity, current_identity
+from .auth import router as auth_router
+from .db import SessionLocal, get_db
 from .migrate import require_current_schema
-from .models import Event, Task, Workflow
+from .models import Event, Membership, Task, Workflow
 from .planner import demo_plan
+from .workspaces import router as workspace_router
 
 
 @asynccontextmanager
@@ -22,22 +26,29 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORCHESTRA AI Checkpoint 1", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-CSRF-Token", "Last-Event-ID"],
 )
+app.include_router(auth_router)
+app.include_router(workspace_router)
 
 
-def auth(x_api_key: str | None = Header(default=None)):
-    key = os.getenv("API_KEY", "local-dev-key-change-before-exposure")
-    if x_api_key != key:
-        raise HTTPException(401, "Invalid API key")
+@app.middleware("http")
+async def private_responses(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class CreateWorkflow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_id: str = Field(min_length=1, max_length=36)
     prompt: str = Field(min_length=3, max_length=3000)
     csv_text: str = Field(min_length=3, max_length=250000)
 
@@ -46,9 +57,30 @@ def event(db, wid, kind, details=None):
     db.add(Event(workflow_id=wid, kind=kind, details=details or {}))
 
 
+def visible_workflow(
+    db: Session,
+    wid: str,
+    identity: Identity,
+    roles: tuple[str, ...] = ("owner", "member", "viewer"),
+) -> Workflow:
+    workflow = db.get(Workflow, wid)
+    membership = (
+        db.get(Membership, (workflow.workspace_id, identity.user.id))
+        if workflow and workflow.workspace_id
+        else None
+    )
+    if workflow is None or membership is None:
+        raise HTTPException(404, "Workflow not found")
+    if membership.role not in roles:
+        raise HTTPException(403, "Your workspace role does not allow this action")
+    return workflow
+
+
 def serialize(w: Workflow, tasks: Sequence[Task]):
     return {
         "id": w.id,
+        "workspace_id": w.workspace_id,
+        "created_by": w.created_by,
         "prompt": w.prompt,
         "status": w.status,
         "mode": w.mode,
@@ -73,13 +105,26 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.3.0"}
 
 
-@app.post("/api/v1/workflows", status_code=202, dependencies=[Depends(auth)])
-def create_workflow(body: CreateWorkflow, db: Session = Depends(get_db)):
+@app.post("/api/v1/workflows", status_code=202)
+def create_workflow(
+    body: CreateWorkflow,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
     plan = demo_plan()
-    w = Workflow(prompt=body.prompt, input_csv=body.csv_text, status="queued")
+    w = Workflow(
+        prompt=body.prompt,
+        input_csv=body.csv_text,
+        status="queued",
+        workspace_id=body.workspace_id,
+        created_by=identity.user.id,
+    )
     db.add(w)
     db.flush()
     for i, p in enumerate(plan.tasks):
@@ -96,29 +141,41 @@ def create_workflow(body: CreateWorkflow, db: Session = Depends(get_db)):
     return {"workflow_id": w.id, "status": w.status, "url": f"/api/v1/workflows/{w.id}"}
 
 
-@app.get("/api/v1/workflows", dependencies=[Depends(auth)])
-def list_workflows(db: Session = Depends(get_db)):
-    ws = db.scalars(select(Workflow).order_by(Workflow.created_at.desc()).limit(50)).all()
+@app.get("/api/v1/workflows")
+def list_workflows(
+    workspace_id: str = Query(min_length=1, max_length=36),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    ws = db.scalars(
+        select(Workflow)
+        .where(Workflow.workspace_id == workspace_id)
+        .order_by(Workflow.created_at.desc())
+        .limit(50)
+    ).all()
     return [
         {"id": w.id, "prompt": w.prompt, "status": w.status, "created_at": w.created_at.isoformat()}
         for w in ws
     ]
 
 
-@app.get("/api/v1/workflows/{wid}", dependencies=[Depends(auth)])
-def get_workflow(wid: str, db: Session = Depends(get_db)):
-    w = db.get(Workflow, wid)
-    if not w:
-        raise HTTPException(404, "Workflow not found")
+@app.get("/api/v1/workflows/{wid}")
+def get_workflow(
+    wid: str, identity: Identity = Depends(current_identity), db: Session = Depends(get_db)
+):
+    w = visible_workflow(db, wid, identity)
     tasks = db.scalars(select(Task).where(Task.workflow_id == wid).order_by(Task.ordinal)).all()
     return serialize(w, tasks)
 
 
-@app.post("/api/v1/workflows/{wid}/cancel", dependencies=[Depends(auth)])
-def cancel_workflow(wid: str, db: Session = Depends(get_db)):
-    w = db.get(Workflow, wid)
-    if not w:
-        raise HTTPException(404, "Workflow not found")
+@app.post("/api/v1/workflows/{wid}/cancel")
+def cancel_workflow(
+    wid: str, identity: Identity = Depends(current_identity), db: Session = Depends(get_db)
+):
+    w = visible_workflow(db, wid, identity, ("owner", "member"))
     if w.status in ("succeeded", "failed", "cancelled"):
         raise HTTPException(409, "Workflow already terminal")
     w.status = "cancelled"
@@ -129,10 +186,14 @@ def cancel_workflow(wid: str, db: Session = Depends(get_db)):
     return {"workflow_id": wid, "status": "cancelled"}
 
 
-@app.get("/api/v1/workflows/{wid}/events", dependencies=[Depends(auth)])
-def get_events(wid: str, after: int = 0, db: Session = Depends(get_db)):
-    if not db.get(Workflow, wid):
-        raise HTTPException(404, "Workflow not found")
+@app.get("/api/v1/workflows/{wid}/events")
+def get_events(
+    wid: str,
+    after: int = Query(default=0, ge=0),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity)
     events = db.scalars(
         select(Event)
         .where(Event.workflow_id == wid, Event.id > after)
@@ -145,30 +206,52 @@ def get_events(wid: str, after: int = 0, db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/v1/workflows/{wid}/stream", dependencies=[Depends(auth)])
-async def stream_events(wid: str, after: int = 0):
-    # This prototype endpoint uses a header token, not query-string credentials.
+@app.get("/api/v1/workflows/{wid}/stream")
+async def stream_events(
+    wid: str,
+    request: Request,
+    after: int = Query(default=0, ge=0),
+    last_event_id: str | None = Header(default=None),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity)
+    try:
+        cursor = max(after, int(last_event_id or 0))
+        if cursor < 0:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(400, "Invalid event cursor") from None
+    db.close()
+
     async def events():
-        last = after
+        last = cursor
         for _ in range(150):
-            with next_db() as db:
-                found = db.scalars(
+            with next_db() as stream_db:
+                try:
+                    live_identity = current_identity(request, stream_db)
+                    workflow = visible_workflow(stream_db, wid, live_identity)
+                except HTTPException:
+                    return
+                found = stream_db.scalars(
                     select(Event)
                     .where(Event.workflow_id == wid, Event.id > last)
                     .order_by(Event.id)
                     .limit(100)
                 ).all()
-                for e in found:
-                    import json
-
-                    yield f"id: {e.id}\nevent: workflow\ndata: {json.dumps({'kind': e.kind, 'details': e.details})}\n\n"
-                    last = e.id
+                payloads = [
+                    (e.id, json.dumps({"kind": e.kind, "details": e.details})) for e in found
+                ]
+                terminal = workflow.status in ("succeeded", "failed", "cancelled")
+            for event_id, payload in payloads:
+                yield f"id: {event_id}\nevent: workflow\ndata: {payload}\n\n"
+                last = event_id
+            if terminal and len(payloads) < 100:
+                return
             await asyncio.sleep(1)
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
 def next_db():
-    from .db import SessionLocal
-
     return SessionLocal()

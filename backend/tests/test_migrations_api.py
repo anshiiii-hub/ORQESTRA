@@ -70,7 +70,6 @@ def test_adoption_rejects_incompatible_schema(tmp_path):
 
 def test_authenticated_workflow_runs_on_migrated_database(migrated_database, monkeypatch):
     engine, sessions, _ = migrated_database
-    monkeypatch.setenv("API_KEY", "integration-only-key")
     monkeypatch.setattr(main, "require_current_schema", lambda: require_current_schema(engine))
     monkeypatch.setattr(worker, "SessionLocal", sessions)
 
@@ -79,14 +78,29 @@ def test_authenticated_workflow_runs_on_migrated_database(migrated_database, mon
             yield db
 
     main.app.dependency_overrides[main.get_db] = get_test_db
-    headers = {"X-API-Key": "integration-only-key"}
+    headers = {"Origin": "http://localhost:5173"}
     try:
         with TestClient(main.app) as client:
             assert client.get("/api/v1/workflows").status_code == 401
+            registered = client.post(
+                "/api/v1/auth/register",
+                headers=headers,
+                json={"email": "integration@example.com", "password": "integration-password"},
+            )
+            assert registered.status_code == 201
+            headers["X-CSRF-Token"] = registered.json()["csrf_token"]
+            workspace = client.post(
+                "/api/v1/workspaces", headers=headers, json={"name": "Integration"}
+            )
+            assert workspace.status_code == 201
             response = client.post(
                 "/api/v1/workflows",
                 headers=headers,
-                json={"prompt": "Analyze sales", "csv_text": "item,sales\nA,10\nB,20"},
+                json={
+                    "workspace_id": workspace.json()["id"],
+                    "prompt": "Analyze sales",
+                    "csv_text": "item,sales\nA,10\nB,20",
+                },
             )
             assert response.status_code == 202
             wid = response.json()["workflow_id"]
