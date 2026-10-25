@@ -18,6 +18,13 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       retries: 15
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
+    depends_on:
+      postgres: {condition: service_healthy}
   api:
     build: ./backend
     environment:
@@ -27,6 +34,7 @@ services:
       API_KEY: ${API_KEY:-local-dev-key-change-before-exposure}
     ports: ["127.0.0.1:${API_PORT:-8001}:8000"]
     depends_on:
+      migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     restart: unless-stopped
@@ -37,6 +45,7 @@ services:
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
       REDIS_URL: redis://redis:6379/0
     depends_on:
+      migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     restart: unless-stopped
