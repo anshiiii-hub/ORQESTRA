@@ -23,10 +23,23 @@ def test_restart_only_requeues_active_workflows(sessions, status):
         workflow = Workflow(prompt="Recovery test", status=status)
         db.add(workflow)
         db.flush()
-        task = Task(workflow_id=workflow.id, name="inspect", agent="csv_inspector",
-                    status="running", attempts=1, ordinal=0)
-        completed = Task(workflow_id=workflow.id, name="completed", agent="csv_inspector",
-                         status="succeeded", result={"saved": True}, attempts=1, ordinal=1)
+        task = Task(
+            workflow_id=workflow.id,
+            name="inspect",
+            agent="csv_inspector",
+            status="running",
+            attempts=1,
+            ordinal=0,
+        )
+        completed = Task(
+            workflow_id=workflow.id,
+            name="completed",
+            agent="csv_inspector",
+            status="succeeded",
+            result={"saved": True},
+            attempts=1,
+            ordinal=1,
+        )
         db.add_all([task, completed])
     worker.recover_running_tasks()
     worker.recover_running_tasks()
@@ -49,13 +62,22 @@ def test_recovered_active_workflow_completes(sessions):
     from app.planner import demo_plan
 
     with sessions.begin() as db:
-        workflow = Workflow(prompt="Analyze sales", input_csv="item,sales\nA,10\nB,20", status="running")
+        workflow = Workflow(
+            prompt="Analyze sales", input_csv="item,sales\nA,10\nB,20", status="running"
+        )
         db.add(workflow)
         db.flush()
         for ordinal, planned in enumerate(demo_plan().tasks):
-            db.add(Task(workflow_id=workflow.id, name=planned.id, agent=planned.agent,
-                        dependencies=planned.dependencies, ordinal=ordinal,
-                        status="running" if ordinal == 0 else "pending"))
+            db.add(
+                Task(
+                    workflow_id=workflow.id,
+                    name=planned.id,
+                    agent=planned.agent,
+                    dependencies=planned.dependencies,
+                    ordinal=ordinal,
+                    status="running" if ordinal == 0 else "pending",
+                )
+            )
     worker.recover_running_tasks()
     for _ in range(4):
         assert worker.tick() is True

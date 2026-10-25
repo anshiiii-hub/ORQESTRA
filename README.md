@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 01 (runnable prototype)
+# ORQESTRA AI — Checkpoint 02 (repository hardening)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This is the **first engineering checkpoint**, not the complete 7-agent product. It runs a deterministic three-agent CSV workflow through a persisted PostgreSQL task graph. No paid AI account is necessary.
+This prototype runs a deterministic three-agent CSV workflow through a persisted PostgreSQL task graph. Checkpoint 02 adds dependency locks, Alembic migrations, development checks, and CI. The full multi-agent LLM product remains planned. No paid AI account is necessary.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -12,6 +12,9 @@ This is the **first engineering checkpoint**, not the complete 7-agent product. 
 - Automatic requeue of interrupted pure tasks when the single worker restarts.
 - A simple development API key; bound to loopback only in Compose.
 - A Redis service provisioned for a later checkpoint (not in the current execution path).
+- Hashed Python dependency locks and a frontend lockfile used by Docker builds.
+- Alembic baseline migration, schema-checked database adoption, and startup revision checks.
+- Ruff, Mypy, pre-commit hooks, and GitHub Actions for backend and frontend checks; see [development instructions](docs/development.md).
 
 ## Setup
 1. Install Docker Desktop (Compose v2).
@@ -32,7 +35,7 @@ curl -X POST http://localhost:8001/api/v1/workflows \
 The response is HTTP 202 with a workflow ID. Use GET `/api/v1/workflows/{id}` with the same header to read progress. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (25 October 2026): all 25 backend tests passed locally and in an isolated API container; the frontend production build passed. All five Compose services were running, with PostgreSQL and Redis healthy. An isolated SQLite workflow smoke test passed. Browser-to-PostgreSQL execution still needs an end-to-end acceptance check.
+- Validation status (25 October 2026): 29 backend tests passed in an isolated Python 3.12 container, including migration, adoption, and authenticated API-to-worker tests. Migration/API checks also passed against a disposable PostgreSQL 16 database. Ruff lint/format, Mypy, hashed dependency installation, API image build, and frontend production build passed. Browser-based acceptance remains a separate check.
 
 - **Do not expose this prototype publicly or deploy it to production.** The single shared API key is development-only; there is no per-user RBAC, workspace isolation, login, CSRF policy, token rotation or rate limiting.
 - Frontend stores the development API key in browser localStorage, suitable only for a personal local demo; replace with server-backed sessions before shared deployment.
@@ -44,12 +47,12 @@ The response is HTTP 202 with a workflow ID. Use GET `/api/v1/workflows/{id}` wi
 - All workflows share the demonstration database. No isolation or retention implementation yet.
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
-## Roadmap to Checkpoint 02
-1. Proper identity/workspaces/RBAC, migrations, object storage.
-2. Versioned agent request/result contracts; LLM adapter with structured planner output and strict validation.
-3. Redis-backed worker queue, multi-worker leases and heartbeats, durable recovery.
-4. Capability-aware routing, policy-enforced tool gateway, controlled retries and limits.
-5. Parallel ready-node execution, verifiers, checkpoints and benchmark harness.
+## Next checkpoints
+1. Checkpoint 03: identity, workspaces, memberships, RBAC, and session security.
+2. Checkpoint 04: versioned agent request/result contracts and capability registry.
+3. Checkpoint 05: LLM adapter with structured planner output and strict validation.
+4. Checkpoints 06–08: concurrent scheduling, leases, routing, and restricted tools.
+5. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
 
 ## Repository
 ```

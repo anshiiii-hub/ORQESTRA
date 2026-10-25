@@ -16,6 +16,10 @@ def test_finite_summary_is_json_serializable():
     csv_text = "item,value\nA,-10.5\nB,20\nC,\n"
     summary = summarize_csv(csv_text, {"inspect": inspect_csv(csv_text, {})})
     assert summary["numeric_columns"]["value"] == {
-        "count": 2, "sum": 9.5, "mean": 4.75, "min": -10.5, "max": 20.0,
+        "count": 2,
+        "sum": 9.5,
+        "mean": 4.75,
+        "min": -10.5,
+        "max": 20.0,
     }
     json.dumps(summary, allow_nan=False)

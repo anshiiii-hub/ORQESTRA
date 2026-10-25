@@ -1,0 +1,21 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Python lint
+        entry: python -m ruff check --config backend/pyproject.toml backend
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: ruff-format
+        name: Python format
+        entry: python -m ruff format --check --config backend/pyproject.toml backend
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: mypy
+        name: Python type checks
+        entry: python -m mypy --config-file backend/pyproject.toml backend/app
+        language: system
+        pass_filenames: false
+        types: [python]
