@@ -17,12 +17,15 @@ SCHEMA_DIRECTORY = Path(__file__).resolve().parents[1] / "contracts"
 
 
 def schemas() -> dict[str, dict]:
+    from .planning import PlannerProposal
+
     models: dict[str, type[Contract]] = {
         "agent-request.v1.json": AgentRequest,
         "agent-result.v1.json": AgentResult,
         "csv-inspection.v1.json": InspectionOutput,
         "csv-summary.v1.json": SummaryOutput,
         "verification.v1.json": VerificationOutput,
+        "planner-proposal.v1.json": PlannerProposal,
     }
     return {
         name: {

@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "PlannedTask": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+          "title": "Agent",
+          "type": "string"
+        },
+        "agent_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "capability": {
+          "enum": [
+            "csv.inspect",
+            "csv.summarize",
+            "result.verify"
+          ],
+          "title": "Capability",
+          "type": "string"
+        },
+        "dependencies": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 25,
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "input_bindings": {
+          "additionalProperties": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+            "type": "string"
+          },
+          "maxProperties": 25,
+          "title": "Input Bindings",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "capability"
+      ],
+      "title": "PlannedTask",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "final_task_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "title": "Final Task Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tasks": {
+      "items": {
+        "$ref": "#/$defs/PlannedTask"
+      },
+      "maxItems": 25,
+      "minItems": 1,
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "tasks",
+    "final_task_id"
+  ],
+  "title": "PlannerProposal",
+  "type": "object"
+}
