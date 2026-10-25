@@ -11,7 +11,8 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine
 
 from . import models  # noqa: F401
-from .db import Base, engine
+from .db import engine
+from .legacy_schema import checkpoint_one_metadata
 
 
 def migration_config(database_url: str | None = None) -> Config:
@@ -36,7 +37,7 @@ def adopt_existing(db_engine: Engine = engine) -> None:
         context = MigrationContext.configure(connection, opts={"compare_type": True})
         if context.get_current_heads():
             raise RuntimeError("Database is already versioned; use alembic upgrade head.")
-        if compare_metadata(context, Base.metadata):
+        if compare_metadata(context, checkpoint_one_metadata()):
             raise RuntimeError("Existing schema does not match Checkpoint 01; adoption refused.")
     # Pin adoption to the baseline, even after later migrations are introduced.
     command.stamp(migration_config(db_engine.url.render_as_string(hide_password=False)), "0001")

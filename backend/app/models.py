@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -18,6 +18,8 @@ def now():
 class Workflow(Base):
     __tablename__ = "workflows"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     prompt: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     mode: Mapped[str] = mapped_column(String(32), default="csv_demo")
@@ -52,4 +54,40 @@ class Event(Base):
     )
     kind: Mapped[str] = mapped_column(String(80))
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    email: Mapped[str] = mapped_column(String(254), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (
+        CheckConstraint("role IN ('owner', 'member', 'viewer')", name="ck_membership_role"),
+    )
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(16))
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

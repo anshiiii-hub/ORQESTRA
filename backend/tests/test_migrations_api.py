@@ -7,8 +7,9 @@ from sqlalchemy import create_engine, inspect
 
 from app import main, worker
 from app.db import Base
-from app.migrate import adopt_existing, require_current_schema
-from app.models import Workflow
+from app.legacy_schema import checkpoint_one_metadata
+from app.migrate import adopt_existing, migration_config, require_current_schema
+from app.models import Workflow, now
 
 
 def test_migration_round_trip_matches_models(migrated_database):
@@ -27,18 +28,31 @@ def test_migration_round_trip_matches_models(migrated_database):
 def test_adoption_preserves_existing_data(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
     try:
-        Base.metadata.create_all(engine)
+        legacy = checkpoint_one_metadata()
+        legacy.create_all(engine)
         from sqlalchemy.orm import Session
 
-        with Session(engine) as db:
-            workflow = Workflow(prompt="Keep existing data")
-            db.add(workflow)
-            db.commit()
-            wid = workflow.id
+        wid = "legacy-workflow"
+        with engine.begin() as connection:
+            connection.execute(
+                legacy.tables["workflows"]
+                .insert()
+                .values(
+                    id=wid,
+                    prompt="Keep existing data",
+                    status="succeeded",
+                    mode="csv_demo",
+                    input_csv="a\n1",
+                    created_at=now(),
+                    updated_at=now(),
+                )
+            )
         adopt_existing(engine)
+        command.upgrade(migration_config(str(engine.url)), "head")
         require_current_schema(engine)
         with Session(engine) as db:
             assert db.get(Workflow, wid).prompt == "Keep existing data"
+            assert db.get(Workflow, wid).workspace_id is None
         with pytest.raises(RuntimeError, match="already versioned"):
             adopt_existing(engine)
     finally:
