@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users} from 'lucide-react';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users} from 'lucide-react';
 import {API, ApiError, request, upload} from './api';
 import './style.css';
 
@@ -16,6 +16,8 @@ type ResearchConfiguration = {available: boolean; max_urls: number; max_response
 type ResearchSource = {id: string; url: string; title: string; excerpt: string; content_sha256: string | null; fetched_at: string | null; trust_level: 'untrusted'; status: 'fetched' | 'failed'; error_code: string | null};
 type ResearchResult = {id: string; status: string; query: string; sources: ResearchSource[]};
 type DatasetAnalysis = {id: string; workspace_id: string; filename: string; file_format: string; source_size_bytes: number; content_sha256: string; row_count: number; column_count: number; metadata: {analysis_version: string; formula_cells_treated_as_data: number}; profile: {rows: number; columns: {name: string; inferred_type: string; missing_count: number; distinct_count: number; example?: string; statistics?: {count: number; mean: number; min: number; max: number; sum: number}}[]}; chart_artifacts: {id: string; title: string}[]; csv_export_url: string};
+type SandboxConfiguration = {available: boolean; max_files: number; max_patch_files: number; max_input_bytes: number; max_checks: number; checks: string[]; memory_bytes: number; cpu_cores: number; pids: number; network: 'none'; host_mounts: number};
+type SandboxResult = {id: string; status: 'completed' | 'failed' | 'timed_out'; diff: string; artifact: {checks: {check: string; status: string; exit_code: number | null; stdout: string; stderr: string}[]; isolation: {network: string; host_mounts: number; memory_bytes?: number; cpu_cores?: number; pids?: number; wall_time_seconds?: number}}};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -118,6 +120,11 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [researchResult, setResearchResult] = useState<ResearchResult | null>(null);
   const [datasetFile, setDatasetFile] = useState<File | null>(null);
   const [datasetAnalysis, setDatasetAnalysis] = useState<DatasetAnalysis | null>(null);
+  const [sandboxConfiguration, setSandboxConfiguration] = useState<SandboxConfiguration | null>(null);
+  const [sandboxFiles, setSandboxFiles] = useState('{\n  "main.py": "def add(a, b):\\n    return a - b\\n",\n  "test_main.py": "from main import add\\n\\ndef test_add():\\n    assert add(2, 3) == 5\\n"\n}');
+  const [sandboxPatch, setSandboxPatch] = useState('{\n  "main.py": "def add(a, b):\\n    return a + b\\n"\n}');
+  const [sandboxCheck, setSandboxCheck] = useState('pytest');
+  const [sandboxResult, setSandboxResult] = useState<SandboxResult | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -160,6 +167,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const researchPolicy = await request<ResearchConfiguration>('/research/config', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setResearchConfiguration(researchPolicy);
+        const sandboxPolicy = await request<SandboxConfiguration>('/sandbox/config', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setSandboxConfiguration(sandboxPolicy);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -196,6 +206,18 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     const result = await upload<DatasetAnalysis>(`/data-analysis/import?${query.toString()}`, datasetFile, session.csrf_token);
     setDatasetAnalysis(result);
   });
+  const runSandbox = () => action(async () => {
+    if (!workspace || !canWrite || !sandboxConfiguration?.available) return;
+    const files = JSON.parse(sandboxFiles) as Record<string, string>;
+    const patch = JSON.parse(sandboxPatch) as Record<string, string>;
+    const result = await mutate<SandboxResult>('/sandbox/run', {
+      workspace_id: workspace.id,
+      files,
+      patch,
+      checks: [sandboxCheck],
+    });
+    setSandboxResult(result);
+  });
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
   return <div className="shell">
@@ -209,7 +231,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 09 · Local development</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 10 · Local development</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -271,6 +293,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           {datasetAnalysis.chart_artifacts.map(chart => <figure className="dataset-chart" key={chart.id}><figcaption>{chart.title}</figcaption><img src={`${API}/api/v1/data-analysis/${datasetAnalysis.id}/charts/${chart.id}.svg`} alt={chart.title}/></figure>)}
           <div className="dataset-columns">{datasetAnalysis.profile.columns.map(column => <article className="agent-card" key={column.name}><strong>{column.name}</strong><small>{column.inferred_type} · {column.missing_count} missing · {column.distinct_count} distinct</small>{column.statistics && <small>Mean {column.statistics.mean} · Min {column.statistics.min} · Max {column.statistics.max} · Sum {column.statistics.sum}</small>}{column.example && <small>Example: {column.example}</small>}</article>)}</div>
         </div>}
+      </section>
+      <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">CODE PROPOSAL / ISOLATED TEST</div><h2>Review a patch in the sandbox</h2></div><Code2 size={18}/></div>
+        <p className="helper">Submit baseline files and a proposed replacement patch as JSON. Only the fixed Python checks below can run. The temporary container has no network or host mounts and is removed after the run.</p>
+        {!sandboxConfiguration?.available && <p className="helper">Sandbox execution is off. Enable it only after configuring a dedicated Docker Engine with TLS and building the pinned runtime image.</p>}
+        <div className="sandbox-form"><div><label htmlFor="sandbox-files">Baseline project files (JSON)</label><textarea id="sandbox-files" className="code-input" rows={9} value={sandboxFiles} onChange={event => setSandboxFiles(event.target.value)} disabled={!canWrite || busy}/></div><div><label htmlFor="sandbox-patch">Proposed patch files (JSON)</label><textarea id="sandbox-patch" className="code-input" rows={7} value={sandboxPatch} onChange={event => setSandboxPatch(event.target.value)} disabled={!canWrite || busy}/></div><div className="sandbox-actions"><label htmlFor="sandbox-check">Check to run</label><select id="sandbox-check" value={sandboxCheck} onChange={event => setSandboxCheck(event.target.value)} disabled={!canWrite || busy}><option value="pytest">pytest</option><option value="unittest">unittest</option><option value="compileall">compileall</option></select><button className="secondary" type="button" onClick={runSandbox} disabled={!canWrite || busy || !sandboxConfiguration?.available}>Run isolated check</button></div></div>
+        {sandboxResult && <div className="sandbox-result"><div className="agent-card-head"><strong>Run {sandboxResult.id.slice(0, 8)}</strong><span className={`status ${sandboxResult.status}`}>{sandboxResult.status.toUpperCase()}</span></div><p className="helper">Network: {sandboxResult.artifact.isolation.network} · Host mounts: {sandboxResult.artifact.isolation.host_mounts}</p><h3>Proposed diff</h3><pre className="output">{sandboxResult.diff || 'No changes in the proposed patch.'}</pre>{sandboxResult.artifact.checks.map(check => <article className="agent-card" key={check.check}><strong>{check.check} · {check.status}{check.exit_code === null ? '' : ` · exit ${check.exit_code}`}</strong>{check.stdout && <pre className="output">{check.stdout}</pre>}{check.stderr && <pre className="output error">{check.stderr}</pre>}</article>)}</div>}
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>

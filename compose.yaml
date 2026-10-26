@@ -45,6 +45,10 @@ services:
       DISABLED_AGENTS: ${DISABLED_AGENTS:-}
       RESEARCH_ENABLED: ${RESEARCH_ENABLED:-false}
       RESEARCH_ALLOWED_DOMAINS: ${RESEARCH_ALLOWED_DOMAINS:-}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
+      DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-}
+      DOCKER_TLS_VERIFY: ${SANDBOX_DOCKER_TLS_VERIFY:-}
+      DOCKER_CERT_PATH: ${SANDBOX_DOCKER_CERT_PATH:-/run/sandbox-docker-certs}
     ports: ["127.0.0.1:${API_PORT:-8001}:8000"]
     depends_on:
       migrate: {condition: service_completed_successfully}

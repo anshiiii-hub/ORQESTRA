@@ -29,6 +29,7 @@ from .heartbeats import agent_catalog
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import (
+    CodeSandboxRun,
     DatasetAnalysis,
     Event,
     Membership,
@@ -49,6 +50,18 @@ from .research import (
     ResearchSearchRequest,
     research_settings,
 )
+from .sandbox import (
+    MAX_CHECKS,
+    MAX_CONCURRENT_RUNS,
+    MAX_FILES,
+    MAX_INPUT_BYTES,
+    MAX_JSON_REQUEST_BYTES,
+    MAX_PATCH_FILES,
+    SandboxController,
+    SandboxError,
+    SandboxRunRequest,
+    sandbox_runtime_configured,
+)
 from .workspaces import router as workspace_router
 
 
@@ -58,7 +71,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -186,7 +199,7 @@ def serialize(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.9.0"}
+    return {"status": "ok", "version": "1.0.0"}
 
 
 @app.get("/api/v1/planner/config")
@@ -471,6 +484,97 @@ def get_dataset_chart(
     if chart is None:
         raise HTTPException(404, "Chart not found")
     return Response(chart["svg"], media_type="image/svg+xml")
+
+
+@app.get("/api/v1/sandbox/config")
+def sandbox_configuration(identity: Identity = Depends(current_identity)):
+    return {
+        "available": sandbox_runtime_configured(),
+        "max_files": MAX_FILES,
+        "max_patch_files": MAX_PATCH_FILES,
+        "max_input_bytes": MAX_INPUT_BYTES,
+        "max_checks": MAX_CHECKS,
+        "max_concurrent_runs": MAX_CONCURRENT_RUNS,
+        "checks": ["pytest", "unittest", "compileall"],
+        "memory_bytes": 256 * 1024 * 1024,
+        "cpu_cores": 0.5,
+        "pids": 32,
+        "network": "none",
+        "host_mounts": 0,
+    }
+
+
+@app.post("/api/v1/sandbox/run", status_code=201)
+async def run_code_sandbox(
+    request: Request,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_JSON_REQUEST_BYTES:
+                raise HTTPException(413, "The sandbox request is too large")
+        except ValueError:
+            raise HTTPException(400, "Invalid request length") from None
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_JSON_REQUEST_BYTES:
+            raise HTTPException(413, "The sandbox request is too large")
+    try:
+        payload = SandboxRunRequest.model_validate_json(bytes(body))
+    except (ValueError, ValidationError):
+        raise HTTPException(422, "The sandbox request is invalid") from None
+
+    from .auth import require_role
+
+    require_role(db, payload.workspace_id, identity, ("owner", "member"))
+    if not sandbox_runtime_configured():
+        raise HTTPException(503, "The isolated sandbox runtime is disabled or unavailable")
+    try:
+        result = await asyncio.to_thread(SandboxController().run, payload)
+    except SandboxError as error:
+        status = 422 if error.code == "sandbox_diff_too_large" else 503
+        raise HTTPException(status, str(error)) from None
+
+    run = CodeSandboxRun(
+        workspace_id=payload.workspace_id,
+        created_by=identity.user.id,
+        status=result["status"],
+        patch_json={"diff": result["diff"]},
+        artifact_json=result,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return serialize_sandbox_run(run)
+
+
+def serialize_sandbox_run(run: CodeSandboxRun):
+    return {
+        "id": run.id,
+        "workspace_id": run.workspace_id,
+        "status": run.status,
+        "diff": run.patch_json["diff"],
+        "artifact": run.artifact_json,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+@app.get("/api/v1/sandbox/runs/{run_id}")
+def get_sandbox_run(
+    run_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    run = db.get(CodeSandboxRun, run_id)
+    membership = (
+        db.get(Membership, (run.workspace_id, identity.user.id)) if run is not None else None
+    )
+    if run is None or membership is None:
+        raise HTTPException(404, "Sandbox run not found")
+    return serialize_sandbox_run(run)
 
 
 @app.get("/api/v1/agents")
