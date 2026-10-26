@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 07 (adaptive capability routing)
+# ORQESTRA AI — Checkpoint 08 (restricted research tools)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 adds fixed/adaptive routing baselines, policy filters, weighted scores, and stored selection explanations. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
+This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 adds an authenticated research gateway for operator-approved HTTPS sources. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -14,6 +14,7 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 - Multiple worker replicas can claim independent ready tasks concurrently; expired leases are recovered without interrupting another live worker.
 - Scheduler lease and cancellation behavior, concurrency verification, and scale-out instructions are documented in [the scheduler guide](docs/scheduler.md).
 - Capability routing filters, deterministic weighted scores, fixed/adaptive baselines, and persisted decision factors; see [routing policy](docs/routing.md).
+- Authenticated research requests with exact operator-managed host allowlists, public-address DNS pinning, HTTPS-only fetching, blocked redirects, bounded HTML/text extraction, and workspace-scoped provenance; see [restricted research tools](docs/research.md). Retrieved page text is always recorded as untrusted data.
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
@@ -41,9 +42,10 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): 187 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, schema checks, and the frontend production build pass. Checkpoint 07 PostgreSQL checks are pending CI. Live-model quality remains unmeasured; no paid API calls were made.
+- Validation status (26 October 2026): 208 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
+- Research fetches are disabled by default. Operators may set `RESEARCH_ENABLED=true` and a comma-separated exact host list in `RESEARCH_ALLOWED_DOMAINS`; the research endpoint is bounded to three URLs, 256 KiB per response, and six seconds per request. It accepts caller-provided URLs on approved domains; it does not crawl links or expose a general-purpose browser/search engine. Source excerpts remain untrusted and cannot grant tool permissions.
 - Passwords use salted scrypt. Session cookies are HttpOnly and SameSite=Lax; authenticated writes require a session-bound CSRF token and trusted origin. Enable secure cookies for HTTPS.
 - The UI polls REST every ~1.8 seconds. Optional SSE uses the session cookie, supports event cursors, and rechecks access during streaming.
 - Alembic manages the schema. API and worker startup require the current migration revision. Existing unversioned databases require explicit, schema-checked adoption; see [migration instructions](docs/database-migrations.md).
@@ -55,7 +57,7 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Next checkpoints
-1. Checkpoint 08: restricted research tools.
+1. Checkpoint 09: expanded research-agent and retrieval orchestration.
 2. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
 
 ## Repository

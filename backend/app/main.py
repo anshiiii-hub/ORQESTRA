@@ -4,6 +4,7 @@ import os
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import datetime
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -21,10 +22,26 @@ from .export_contracts import schemas
 from .heartbeats import agent_catalog
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
-from .models import Event, Membership, Task, TaskAttempt, Workflow, now
+from .models import (
+    Event,
+    Membership,
+    ResearchRun,
+    ResearchSource,
+    Task,
+    TaskAttempt,
+    Workflow,
+    now,
+)
 from .planner import demo_plan
 from .planning import PlannerProposal
 from .planning_runtime import add_tasks, initial_state
+from .research import (
+    ResearchAgent,
+    ResearchError,
+    ResearchGateway,
+    ResearchSearchRequest,
+    research_settings,
+)
 from .workspaces import router as workspace_router
 
 
@@ -34,7 +51,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -162,7 +179,7 @@ def serialize(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.7.0"}
+    return {"status": "ok", "version": "0.8.0"}
 
 
 @app.get("/api/v1/planner/config")
@@ -188,6 +205,132 @@ def planner_configuration(identity: Identity = Depends(current_identity)):
             "max_cost_usd": 1,
             "max_deadline_seconds": 180,
         }
+
+
+def serialize_research(run: ResearchRun, sources: Sequence[ResearchSource]):
+    return {
+        "id": run.id,
+        "workspace_id": run.workspace_id,
+        "query": run.query,
+        "status": run.status,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "sources": [
+            {
+                "id": source.id,
+                "position": source.position,
+                "url": source.url,
+                "title": source.title,
+                "excerpt": source.excerpt,
+                "content_type": source.content_type,
+                "content_sha256": source.content_sha256,
+                "fetched_at": source.fetched_at.isoformat() if source.fetched_at else None,
+                "trust_level": source.trust_level,
+                "status": source.status,
+                "error_code": source.error_code,
+            }
+            for source in sources
+        ],
+    }
+
+
+@app.get("/api/v1/research/config")
+def research_configuration(identity: Identity = Depends(current_identity)):
+    try:
+        settings = research_settings()
+        available = settings.available
+    except ResearchError:
+        available = False
+    return {
+        "available": available,
+        "max_urls": 3,
+        "max_response_bytes": 262144,
+        "max_timeout_seconds": 6,
+        "content_trust": "untrusted",
+    }
+
+
+@app.post("/api/v1/research/search", status_code=201)
+def search_research_sources(
+    body: ResearchSearchRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        gateway = ResearchGateway(research_settings())
+        agent = ResearchAgent(gateway)
+        prepared = gateway.prepare(body.urls)
+    except ResearchError as error:
+        status_code = 503 if error.code in ("research_unavailable", "research_not_configured") else 422
+        raise HTTPException(status_code, str(error)) from None
+
+    cleaned_query = " ".join(body.query.split())
+    run = ResearchRun(
+        workspace_id=body.workspace_id,
+        created_by=identity.user.id,
+        query=cleaned_query,
+        status="running",
+    )
+    db.add(run)
+    db.commit()
+    try:
+        records = agent.search_prepared(cleaned_query, prepared)
+    except ResearchError as error:
+        run.status, run.finished_at = "failed", now()
+        db.commit()
+        raise HTTPException(422, str(error)) from None
+    except Exception:
+        run.status, run.finished_at = "failed", now()
+        db.commit()
+        raise HTTPException(502, "Research sources could not be processed safely") from None
+
+    for position, record in enumerate(records):
+        db.add(
+            ResearchSource(
+                id=record.id,
+                run_id=run.id,
+                position=position,
+                url=record.url,
+                title=record.title,
+                excerpt=record.excerpt,
+                content_type=record.content_type,
+                content_sha256=record.content_sha256,
+                fetched_at=datetime.fromisoformat(record.fetched_at) if record.fetched_at else None,
+                trust_level=record.trust_level,
+                status=record.status,
+                error_code=record.error_code,
+            )
+        )
+    successful = sum(record.status == "fetched" for record in records)
+    run.status = "completed" if successful == len(records) else "partial" if successful else "failed"
+    run.finished_at = now()
+    db.commit()
+    db.refresh(run)
+    sources = db.scalars(
+        select(ResearchSource).where(ResearchSource.run_id == run.id).order_by(ResearchSource.position)
+    ).all()
+    return serialize_research(run, sources)
+
+
+@app.get("/api/v1/research/runs/{run_id}")
+def get_research_run(
+    run_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    run = db.get(ResearchRun, run_id)
+    membership = (
+        db.get(Membership, (run.workspace_id, identity.user.id)) if run is not None else None
+    )
+    if run is None or membership is None:
+        raise HTTPException(404, "Research run not found")
+    sources = db.scalars(
+        select(ResearchSource).where(ResearchSource.run_id == run_id).order_by(ResearchSource.position)
+    ).all()
+    return serialize_research(run, sources)
 
 
 @app.get("/api/v1/agents")

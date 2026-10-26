@@ -12,6 +12,9 @@ type Task = {id: string; name: string; agent: string; status: string; attempts: 
 type Agent = {id: string; version: string; capabilities: string[]; enabled: boolean; availability: 'ready' | 'offline' | 'disabled'; available_workers: number; last_seen_at: string | null};
 type Planning = {provider?: string; model?: string | null; status: string; accounted_tokens?: number; accounted_cost_usd?: string; max_cost_usd?: string; error_code?: string | null; attempts: {number: number; status: string; input_tokens: number | null; output_tokens: number | null}[]};
 type PlannerConfiguration = {llm_available: boolean; model: string | null; provider: string | null; max_attempts: number; max_tokens: number; max_cost_usd: number; max_deadline_seconds: number};
+type ResearchConfiguration = {available: boolean; max_urls: number; max_response_bytes: number; max_timeout_seconds: number; content_trust: 'untrusted'};
+type ResearchSource = {id: string; url: string; title: string; excerpt: string; content_sha256: string | null; fetched_at: string | null; trust_level: 'untrusted'; status: 'fetched' | 'failed'; error_code: string | null};
+type ResearchResult = {id: string; status: string; query: string; sources: ResearchSource[]};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -108,6 +111,10 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [plannerConfiguration, setPlannerConfiguration] = useState<PlannerConfiguration | null>(null);
+  const [researchConfiguration, setResearchConfiguration] = useState<ResearchConfiguration | null>(null);
+  const [researchQuery, setResearchQuery] = useState('');
+  const [researchUrls, setResearchUrls] = useState('');
+  const [researchResult, setResearchResult] = useState<ResearchResult | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -147,6 +154,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const policy = await request<PlannerConfiguration>('/planner/config', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setPlannerConfiguration(policy);
+        const researchPolicy = await request<ResearchConfiguration>('/research/config', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setResearchConfiguration(researchPolicy);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -170,6 +180,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     if (!workspace || !canWrite || (plannerMode === 'llm' && !plannerConfiguration?.llm_available)) return;
     const data = await mutate<{workflow_id: string}>('/workflows', {workspace_id: workspace.id, prompt, csv_text: csv, planner_mode: plannerMode, routing_mode: routingMode, ...(plannerMode === 'llm' ? {planning_max_tokens: Number(planningTokenLimit), planning_max_cost_usd: Number(planningCostLimit), planning_deadline_seconds: Number(planningDeadline)} : {})});
     setWorkflow(null); setEvents([]); setSelected(data.workflow_id);
+  });
+  const searchResearch = () => action(async () => {
+    if (!workspace || !canWrite || !researchConfiguration?.available) return;
+    const urls = researchUrls.split(/\r?\n/).map(url => url.trim()).filter(Boolean);
+    const result = await mutate<ResearchResult>('/research/search', {workspace_id: workspace.id, query: researchQuery, urls});
+    setResearchResult(result);
   });
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
@@ -225,6 +241,20 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           {canWrite && ['running', 'queued', 'planning'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
         </>}
       </section></div>
+      <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">RESTRICTED TOOLS / RESEARCH</div><h2>Search approved sources</h2></div><Activity size={18}/></div>
+        <p className="helper">Enter up to {researchConfiguration?.max_urls || 3} HTTPS URLs on your operator’s exact domain allowlist. Redirects and private IPs are blocked. Retrieved page text is untrusted data, never an instruction.</p>
+        {!researchConfiguration?.available && <p className="helper">Research is off. An operator must enable it and configure approved domains before any fetch can run.</p>}
+        <form className="research-form" onSubmit={event => {event.preventDefault(); searchResearch();}}>
+          <div><label htmlFor="research-query">Search terms</label><input id="research-query" required maxLength={200} value={researchQuery} onChange={event => setResearchQuery(event.target.value)} disabled={!canWrite || busy || !researchConfiguration?.available}/></div>
+          <div><label htmlFor="research-urls">Approved source URLs, one per line</label><textarea id="research-urls" className="code-input" rows={3} required value={researchUrls} onChange={event => setResearchUrls(event.target.value)} disabled={!canWrite || busy || !researchConfiguration?.available}/></div>
+          <button className="secondary" disabled={!canWrite || busy || !researchConfiguration?.available}>Search sources</button>
+        </form>
+        {researchResult && <div className="agent-catalog">{researchResult.sources.map(source => <article className="agent-card" key={source.id}>
+          <div className="agent-card-head"><a href={source.url} target="_blank" rel="noreferrer noopener">{source.title || source.url}</a><span className={`availability ${source.status === 'fetched' ? 'ready' : 'offline'}`}>{source.status}</span></div>
+          <small>{source.trust_level} · {source.fetched_at ? new Date(source.fetched_at).toLocaleString() : source.error_code} · SHA-256 {source.content_sha256 || 'unavailable'}</small>
+          {source.excerpt && <p>{source.excerpt}</p>}
+        </article>)}</div>}
+      </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>
       <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">05 / CAPABILITIES</div><h2>Agent registry</h2></div><BrainCircuit size={18}/></div>

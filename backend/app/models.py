@@ -127,6 +127,42 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class ResearchRun(Base):
+    __tablename__ = "research_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    query: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(24), default="running", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResearchSource(Base):
+    __tablename__ = "research_sources"
+    __table_args__ = (
+        UniqueConstraint("run_id", "url", name="uq_research_source_run_url"),
+        UniqueConstraint("run_id", "position", name="uq_research_source_run_position"),
+        CheckConstraint("trust_level = 'untrusted'", name="ck_research_source_untrusted"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("research_runs.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    url: Mapped[str] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(String(200), default="")
+    excerpt: Mapped[str] = mapped_column(Text, default="")
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trust_level: Mapped[str] = mapped_column(String(24), default="untrusted")
+    status: Mapped[str] = mapped_column(String(24))
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

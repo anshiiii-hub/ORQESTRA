@@ -6,3 +6,4 @@ select{width:100%;font:inherit;background:#0e1420;color:#edf5f9;border:1px solid
 main{min-width:0;flex:1;width:auto}.cards{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:1100px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .planning-budget{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.planning-budget>div{min-width:0}.planning-summary{display:grid;gap:8px;margin-top:20px;padding:14px;border:1px solid #2e4351;border-radius:8px;font-size:11px;color:#95acbc}.planning-summary strong{font-size:12px;color:#c7dde8}.planning-summary .helper{margin:0}.status.planning{color:#dfcb8a}@media(max-width:760px){.planning-budget{grid-template-columns:1fr}}
+.research-form{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}.research-form label{margin-top:4px}.research-form textarea{min-height:90px}
