@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app import planner, worker
 from app.contracts import AgentRequest, AgentResult
 from app.heartbeats import HEARTBEAT_TTL, record_heartbeat
-from app.models import Event, Task, WorkerHeartbeat, Workflow, now
+from app.models import Event, Task, TaskAttempt, WorkerHeartbeat, Workflow, now
 from app.registry import AgentRegistry, build_registry
 
 
@@ -48,6 +48,11 @@ def test_worker_persists_correlated_contracts(runtime):
             assert task.result == result.structured_output
             request_ids.add(request.request_id)
         assert len(request_ids) == 3
+        attempt_rows = db.scalars(select(TaskAttempt).where(TaskAttempt.workflow_id == wid)).all()
+        assert len(attempt_rows) == 3
+        assert all(attempt.status == "succeeded" for attempt in attempt_rows)
+        assert len({attempt.idempotency_key for attempt in attempt_rows}) == 3
+        assert all(attempt.request_envelope for attempt in attempt_rows)
         assert set(tasks[-1].request_envelope["context_refs"].values()) == {
             tasks[0].id,
             tasks[1].id,
@@ -57,6 +62,7 @@ def test_worker_persists_correlated_contracts(runtime):
     assert response["tasks"][0]["capability"] == "csv.inspect"
     assert "request_envelope" not in response["tasks"][0]
     assert response["tasks"][0]["execution"]["schema_version"] == "1.0"
+    assert response["tasks"][0]["execution_attempts"][0]["status"] == "succeeded"
 
 
 @pytest.mark.parametrize(

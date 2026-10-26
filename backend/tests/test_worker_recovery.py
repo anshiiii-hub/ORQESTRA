@@ -1,10 +1,12 @@
+from datetime import timedelta
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app import worker
 from app.db import Base
-from app.models import Event, Task, Workflow
+from app.models import Event, Task, TaskAttempt, TaskDependency, Workflow, now
 
 
 @pytest.fixture
@@ -67,19 +69,30 @@ def test_recovered_active_workflow_completes(sessions):
         )
         db.add(workflow)
         db.flush()
+        planned_rows = {}
         for ordinal, planned in enumerate(demo_plan().tasks):
-            db.add(
-                Task(
-                    workflow_id=workflow.id,
-                    name=planned.id,
-                    agent=planned.agent,
-                    dependencies=planned.dependencies,
-                    capability=planned.capability,
-                    input_bindings=planned.input_bindings,
-                    ordinal=ordinal,
-                    status="running" if ordinal == 0 else "pending",
-                )
+            row = Task(
+                workflow_id=workflow.id,
+                name=planned.id,
+                agent=planned.agent,
+                dependencies=planned.dependencies,
+                capability=planned.capability,
+                input_bindings=planned.input_bindings,
+                ordinal=ordinal,
+                status="running" if ordinal == 0 else "pending",
             )
+            db.add(row)
+            planned_rows[planned.id] = (row, planned)
+        db.flush()
+        for row, planned in planned_rows.values():
+            for dependency in planned.dependencies:
+                db.add(
+                    TaskDependency(
+                        workflow_id=workflow.id,
+                        task_id=row.id,
+                        dependency_task_id=planned_rows[dependency][0].id,
+                    )
+                )
     worker.recover_running_tasks()
     for _ in range(4):
         assert worker.tick() is True
@@ -87,3 +100,46 @@ def test_recovered_active_workflow_completes(sessions):
         restored = db.get(Workflow, workflow.id)
         assert restored.status == "succeeded"
         assert restored.output["summary"]["numeric_columns"]["sales"]["sum"] == 30
+
+
+@pytest.mark.parametrize("expired,expected", [(False, "running"), (True, "pending")])
+def test_recovery_respects_task_lease_and_expires_stale_attempts(sessions, expired, expected):
+    current = now()
+    lease = current - timedelta(seconds=1) if expired else current + timedelta(minutes=1)
+    with sessions.begin() as db:
+        workflow = Workflow(prompt="Lease recovery", status="running")
+        db.add(workflow)
+        db.flush()
+        task = Task(
+            workflow_id=workflow.id,
+            name="inspect",
+            agent="csv_inspector",
+            status="running",
+            attempts=1,
+            current_attempt_id="attempt-1",
+            lease_owner="worker-a",
+            lease_expires_at=lease,
+            ordinal=0,
+        )
+        attempt = TaskAttempt(
+            id="attempt-1",
+            task_id="placeholder",
+            workflow_id=workflow.id,
+            attempt_number=1,
+            idempotency_key="placeholder:1",
+            worker_id="worker-a",
+            status="running",
+            lease_expires_at=lease,
+            request_id="request-1",
+            started_at=current,
+        )
+        db.add(task)
+        db.flush()
+        attempt.task_id = task.id
+        db.add(attempt)
+    worker.recover_running_tasks()
+    with sessions() as db:
+        restored = db.get(Task, task.id)
+        record = db.get(TaskAttempt, "attempt-1")
+        assert restored.status == expected
+        assert record.status == ("lease_expired" if expired else "running")

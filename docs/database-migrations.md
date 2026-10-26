@@ -2,6 +2,8 @@
 
 Schema changes are managed by Alembic. API and worker startup check that the database is at the latest revision; they do not create tables. Compose runs the one-shot `migrate` service before starting either process.
 
+Revision `0005` adds task attempt history, worker lease fields, and normalized dependency edges. Existing JSON task dependencies are backfilled to relational rows; workflows, task results, and events are preserved.
+
 ## Fresh database
 
 ```sh

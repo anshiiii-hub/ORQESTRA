@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 05 (structured LLM planning)
+# ORQESTRA AI — Checkpoint 06 (leased DAG scheduler)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs a deterministic three-agent CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 adds an optional OpenAI planning adapter, asynchronous validated DAG proposals, persisted budget reservations, and one bounded repair attempt. Offline planning remains the default and makes no provider calls. Accounts, workspace roles, migrations, and CI remain in place. The full multi-agent LLM product remains planned. No paid AI account is necessary.
+This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 adds normalized dependency edges, durable execution attempts, expiring worker leases, fenced result publication, concurrent ready-node execution, and prompt cancellation. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -10,11 +10,14 @@ This prototype runs a deterministic three-agent CSV workflow through a persisted
 - Three deterministic agents: CSV inspection, numeric summarization, result verification.
 - Optional OpenAI planning with explicit opt-in, server-held credentials, token/cost/deadline checks, and a two-call maximum; see [LLM planning configuration](docs/llm-planning.md).
 - Persisted planning attempts and accepted plans, conservative recovery of uncertain provider charges, and a 20-case replay corpus.
+- Normalized task dependency edges, durable per-run attempt records, idempotency keys, expiring worker leases, and stale-result fencing.
+- Multiple worker replicas can claim independent ready tasks concurrently; expired leases are recovered without interrupting another live worker.
+- Scheduler lease and cancellation behavior, concurrency verification, and scale-out instructions are documented in [the scheduler guide](docs/scheduler.md).
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
 - PostgreSQL workflow/task/event persistence; a separate polling worker.
-- Automatic requeue of interrupted pure tasks when the single worker restarts.
+- Lease-based recovery of interrupted pure tasks after worker failure or lease expiry.
 - Account registration/login, HttpOnly cookie sessions, CSRF protection, and workspace-scoped permissions; bound to loopback in Compose.
 - Workspace creation/selection and owner-only member management in the dashboard.
 - A Redis service provisioned for a later checkpoint (not in the current execution path).
@@ -37,13 +40,13 @@ This prototype runs a deterministic three-agent CSV workflow through a persisted
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): all 179 tests passed from the packaged API image. PostgreSQL checks covered planning migration, durable reservations, bounded repair, cancellation, interruption, budget rejection, and 20 golden replays. Ruff, Mypy, schema drift checks, and the frontend production build passed. Provider tests used mocked HTTP/replay responses; no paid API calls were made and live-model quality is not measured by these tests. Browser checks exercised the explicit planning mode, budget controls, validated graph, execution, and usage summary with an injected replay provider.
+- Validation status (26 October 2026): 181 local tests pass and two PostgreSQL-only lease/concurrency tests are skipped locally and included in CI. Ruff, Mypy, schema drift checks, and the frontend production build pass. Checkpoint 05 passed PostgreSQL planning/runtime checks and GitHub Actions. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
 - Passwords use salted scrypt. Session cookies are HttpOnly and SameSite=Lax; authenticated writes require a session-bound CSRF token and trusted origin. Enable secure cookies for HTTPS.
 - The UI polls REST every ~1.8 seconds. Optional SSE uses the session cookie, supports event cursors, and rechecks access during streaming.
 - Alembic manages the schema. API and worker startup require the current migration revision. Existing unversioned databases require explicit, schema-checked adoption; see [migration instructions](docs/database-migrations.md).
-- One worker only. Heartbeats report liveness; they do not lease tasks or enable safe multi-worker execution. Multi-worker leases and work claiming are deferred. The current worker holds a transaction lock only for scheduling, and task execution happens outside it; concurrent workers are not tested.
+- Workers claim workflow rows briefly with `FOR UPDATE SKIP LOCKED`, persist a task attempt and lease before dispatch, and execute outside database locks. Task results publish only while the current attempt still owns the lease. The lease lasts 360 seconds (longer than the 300-second contract timeout). Execution uses at-least-once recovery: a task may run again after its lease expires, so agents must remain idempotent and free of external side effects.
 - Pure CSV tasks may requeue after restart. A potentially billable planning request is not replayed when its outcome is uncertain; its reservation is retained and the workflow fails explicitly. External write tools still require stronger deduplication and approval.
 - LLM planning sends task instructions, CSV column names and row count to the configured provider; CSV row values stay local. Planning costs are estimates from operator-maintained price snapshots, not an invoice cap.
 - CSV rows are limited to 1000, 40 columns, and 250,000 input characters. Parsing is memory-based, not a hardened upload service.
@@ -51,8 +54,7 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Next checkpoints
-1. Checkpoint 06: concurrent scheduling, worker leases, durable dispatch, and stronger cancellation.
-2. Checkpoints 07–08: adaptive routing and restricted research tools.
+1. Checkpoints 07–08: adaptive routing and restricted research tools.
 3. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
 
 ## Repository

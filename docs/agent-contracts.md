@@ -40,7 +40,7 @@ CSV input keeps its existing character/row/column limits. Serialized successful 
 
 Authenticated `GET /api/v1/agents` returns capability/version/schema metadata, allowed tools, configured enabled state, compatible live-worker count, and availability. Authenticated `GET /api/v1/agents/contracts` returns the runtime JSON Schemas. This global catalog contains no workspace task inputs or results. Registry mutation is not exposed to workspace owners.
 
-The single worker records a heartbeat every five seconds. A matching agent/protocol advertisement seen within 30 seconds is `ready`; otherwise it is `offline`. A configured disabled agent is `disabled`. Heartbeats are observational liveness only: they do not reserve work, guarantee capacity, or enable multiple workers. Expired rows are ignored and are not automatically pruned.
+Each worker process records a heartbeat every five seconds. A matching agent/protocol advertisement seen within 30 seconds is `ready`; otherwise it is `offline`. A configured disabled agent is `disabled`. Heartbeats are observational liveness only: they do not reserve work or guarantee capacity. Task leases, rather than heartbeat rows, coordinate multiple workers. Expired heartbeat rows are ignored and are not automatically pruned.
 
 An operator can set `DISABLED_AGENTS=csv_inspector,csv_summarizer` in `.env` and restart/recreate the API and worker. Compose passes the same configuration to both. Unknown IDs fail startup instead of being silently ignored. Existing queued work requiring a disabled agent fails safely.
 

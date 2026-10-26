@@ -62,7 +62,7 @@ A reservation is committed before any network request. If the worker restarts af
 
 Cancellation prevents subsequent provider calls and prevents a returned plan from creating tasks. A request already in flight may still be charged; reported usage is recorded, or an uncertain reservation is retained. Cancellation is not a refund or a provider-side request-abort guarantee.
 
-HTTP timeouts are capped at 30 seconds per phase, with additional wall-deadline checks before dispatch, between response chunks, and before plan publication. These checks do not forcibly preempt all blocking I/O. Concurrent worker leases, global spend controls, provider failover and stronger execution supervision remain later work.
+HTTP timeouts are capped at 30 seconds per phase, with additional wall-deadline checks before dispatch, between response chunks, and before plan publication. These checks do not forcibly preempt all blocking I/O. Checkpoint 06 adds task-level worker leases and result fencing; global spend controls, provider failover and stronger execution supervision remain later work.
 
 ## Migrations and evidence
 

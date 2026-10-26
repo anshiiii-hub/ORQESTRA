@@ -21,7 +21,7 @@ from .export_contracts import schemas
 from .heartbeats import agent_catalog
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
-from .models import Event, Membership, Task, Workflow
+from .models import Event, Membership, Task, TaskAttempt, Workflow, now
 from .planner import demo_plan
 from .planning import PlannerProposal
 from .planning_runtime import add_tasks, initial_state
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -106,7 +106,10 @@ def visible_workflow(
     return workflow
 
 
-def serialize(w: Workflow, tasks: Sequence[Task]):
+def serialize(
+    w: Workflow, tasks: Sequence[Task], attempts_by_task: dict[str, list[TaskAttempt]] | None = None
+):
+    attempts_by_task = attempts_by_task or {}
     return {
         "id": w.id,
         "workspace_id": w.workspace_id,
@@ -132,6 +135,20 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
                 "status": t.status,
                 "dependencies": t.dependencies,
                 "attempts": t.attempts,
+                "execution_attempts": [
+                    {
+                        "number": attempt.attempt_number,
+                        "status": attempt.status,
+                        "error_code": attempt.error_code,
+                        "started_at": attempt.started_at.isoformat()
+                        if attempt.started_at
+                        else None,
+                        "finished_at": attempt.finished_at.isoformat()
+                        if attempt.finished_at
+                        else None,
+                    }
+                    for attempt in attempts_by_task.get(t.id, [])
+                ],
                 "result": t.result,
                 "error": t.error,
             }
@@ -142,7 +159,7 @@ def serialize(w: Workflow, tasks: Sequence[Task]):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
 
 
 @app.get("/api/v1/planner/config")
@@ -272,7 +289,15 @@ def get_workflow(
 ):
     w = visible_workflow(db, wid, identity)
     tasks = db.scalars(select(Task).where(Task.workflow_id == wid).order_by(Task.ordinal)).all()
-    return serialize(w, tasks)
+    attempts = db.scalars(
+        select(TaskAttempt)
+        .where(TaskAttempt.workflow_id == wid)
+        .order_by(TaskAttempt.attempt_number)
+    ).all()
+    attempts_by_task: dict[str, list[TaskAttempt]] = {}
+    for attempt in attempts:
+        attempts_by_task.setdefault(attempt.task_id, []).append(attempt)
+    return serialize(w, tasks, attempts_by_task)
 
 
 @app.get("/api/v1/workflows/{wid}/plan")
@@ -295,8 +320,19 @@ def cancel_workflow(
         state = deepcopy(w.planning)
         state["status"] = "cancelled"
         w.planning = state
-    for t in db.scalars(select(Task).where(Task.workflow_id == wid, Task.status == "pending")):
+    for t in db.scalars(
+        select(Task).where(Task.workflow_id == wid, Task.status.in_(["pending", "running"]))
+    ):
+        if t.current_attempt_id:
+            attempt = db.get(TaskAttempt, t.current_attempt_id)
+            if attempt is not None and attempt.status == "running":
+                attempt.status = "cancelled"
+                attempt.error_code = "workflow_cancelled"
+                attempt.finished_at = now()
         t.status = "cancelled"
+        t.current_attempt_id = t.lease_owner = None
+        t.lease_expires_at = None
+        event(db, wid, "task_cancelled", {"task": t.name})
     event(db, wid, "workflow_cancelled")
     db.commit()
     return {"workflow_id": wid, "status": "cancelled"}

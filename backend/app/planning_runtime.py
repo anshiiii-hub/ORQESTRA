@@ -16,7 +16,7 @@ from .llm import (
     money,
     planner_settings,
 )
-from .models import Event, Task, Workflow, now
+from .models import Event, Task, TaskDependency, Workflow, now
 from .planner import demo_plan
 from .planning import PlannerProposal, input_token_bound, planning_messages
 
@@ -45,20 +45,33 @@ def initial_state(
 
 
 def add_tasks(db: Session, workflow: Workflow, proposal: PlannerProposal) -> None:
-    for ordinal, task in enumerate(proposal.ordered_tasks()):
-        db.add(
-            Task(
-                workflow_id=workflow.id,
-                name=task.id,
-                agent=task.agent,
-                capability=task.capability,
-                agent_version=task.agent_version,
-                schema_version=task.schema_version,
-                dependencies=task.dependencies,
-                input_bindings=task.input_bindings,
-                ordinal=ordinal,
-            )
+    planned = proposal.ordered_tasks()
+    rows = []
+    for ordinal, task in enumerate(planned):
+        row = Task(
+            workflow_id=workflow.id,
+            name=task.id,
+            agent=task.agent,
+            capability=task.capability,
+            agent_version=task.agent_version,
+            schema_version=task.schema_version,
+            dependencies=task.dependencies,
+            input_bindings=task.input_bindings,
+            ordinal=ordinal,
         )
+        db.add(row)
+        rows.append(row)
+    db.flush()
+    by_name = {row.name: row for row in rows}
+    for task, row in zip(planned, rows, strict=True):
+        for dependency in task.dependencies:
+            db.add(
+                TaskDependency(
+                    workflow_id=workflow.id,
+                    task_id=row.id,
+                    dependency_task_id=by_name[dependency].id,
+                )
+            )
     workflow.execution_plan = proposal.model_dump(mode="json")
 
 
