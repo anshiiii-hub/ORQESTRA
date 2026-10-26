@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2, Lock, AlertTriangle, Check, X, FileText, Download} from 'lucide-react';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2, Lock, AlertTriangle, Check, X, FileText, Download, Pause, PlayCircle, RotateCcw} from 'lucide-react';
 import {API, ApiError, request, upload} from './api';
 import './style.css';
 
@@ -29,7 +29,10 @@ type Artifact = {id: string; workspace_id: string; workflow_id: string | null; t
 type VerificationCriterion = {id: string; category: string; criterion: string; status: 'satisfied' | 'warning' | 'failed'; is_mandatory: boolean; evidence: string};
 type VerificationDefect = {criterion_id: string; severity: 'critical' | 'major' | 'minor' | 'info'; category: string; description: string; evidence_refs: string[]; repairable: boolean; suggested_task_ids: string[]};
 type VerificationReport = {id: string; workspace_id: string; workflow_id: string | null; artifact_id: string | null; decision: 'PASS' | 'PASS_WITH_WARNINGS' | 'REVISION_REQUIRED' | 'FAIL' | 'INDETERMINATE'; confidence_score: number; criteria: VerificationCriterion[]; defects: VerificationDefect[]; summary: string; created_at: string | null};
-type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
+type BenchmarkStats = {runs: number; success_rate: number; mean_duration_ms: number; mean_score: number; total_tokens: number; total_cost_usd: number};
+type BenchmarkSummary = {suite_name: string; total_executions: number; baselines: {fixed: BenchmarkStats; adaptive: BenchmarkStats}; recovery_metrics: {total_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number}; parallel_speedup: number; evaluation_notes: string};
+type SystemReadiness = {status: string; database: string; schema_revision: string; active_workers: number; timestamp: string};
+type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null; recovery_metadata?: Record<string, unknown> | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
 const demoCSV = 'product,sales,units\nFrames,2400,12\nSunglasses,1800,9\nLenses,1200,20';
@@ -151,6 +154,8 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [reportTitle, setReportTitle] = useState('Workspace Synthesized Deliverable');
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
+  const [benchmarkSummary, setBenchmarkSummary] = useState<BenchmarkSummary | null>(null);
+  const [systemReadiness, setSystemReadiness] = useState<SystemReadiness | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -211,10 +216,16 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const artifactList = await request<Artifact[]>(`/artifacts?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
         if (controller.signal.aborted) return;
         setArtifacts(artifactList);
+        const ready = await request<SystemReadiness>('/readyz', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setSystemReadiness(ready);
+        const bench = await request<BenchmarkSummary>('/benchmarks/summary', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setBenchmarkSummary(bench);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]);}
+          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]); setBenchmarkSummary(null); setSystemReadiness(null);}
           fail(error);
         }
       }
@@ -343,6 +354,24 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     });
     setVerificationReport(ver);
   });
+  const pauseWorkflow = (wid: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate(`/workflows/${wid}/pause`);
+  });
+  const resumeWorkflow = (wid: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate(`/workflows/${wid}/resume`);
+  });
+  const retryWorkflow = (wid: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate(`/workflows/${wid}/retry`, {preserve_checkpoint: true});
+  });
+  const runBenchmark = (routingMode?: string) => action(async () => {
+    if (!canWrite) return;
+    await mutate('/benchmarks/executions', {routing_mode: routingMode});
+    const updated = await request<BenchmarkSummary>('/benchmarks/summary');
+    setBenchmarkSummary(updated);
+  });
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
@@ -356,9 +385,10 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         <label htmlFor="workspace-name">New workspace</label><input id="workspace-name" required maxLength={100} value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} placeholder="Workspace name"/>
         <button className="secondary" disabled={busy}>Create workspace</button>
       </form>
+      <div className="readiness-pill"><span className="status-dot green"/> System Ready · Schema 0013 · {systemReadiness?.active_workers ?? 1} worker(s)</div>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 13 · Synthesis, reporting, and verifiable artifacts</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 14 · Durable checkpoint recovery, benchmarks, and deployment</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -397,7 +427,28 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : workflow.status === 'waiting_approval' ? 'Workflow paused awaiting human authorization.' : 'No executable plan was accepted.'}</div> : <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · {t.routing_decision ? `${t.routing_decision.mode} score ${t.routing_decision.score.toFixed(3)}` : 'fixed route'} · {t.execution_attempts.length ? `attempt ${t.execution_attempts.length} ${t.execution_attempts[t.execution_attempts.length - 1].status}` : `${t.attempts} attempts`}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>}
           {workflow.planning && <div className="planning-summary"><strong>{workflow.planning.provider === 'offline' ? 'Offline pipeline' : `OpenAI planning · ${workflow.planning.model || 'configured model'}`}</strong><span>Planning: {workflow.planning.status} · {workflow.planning.attempts.length} provider {workflow.planning.attempts.length === 1 ? 'call' : 'calls'}</span><span>{workflow.planning.accounted_tokens || 0} accounted tokens · Estimated cost ${Number(workflow.planning.accounted_cost_usd || 0).toFixed(6)}</span>{workflow.planning.attempts.some(attempt => ['reserved', 'indeterminate'].includes(attempt.status)) && <span className="helper">A reservation is retained because usage is pending or uncertain.</span>}{workflow.planning.error_code && <span className="error">{workflow.planning.error_code}</span>}</div>}
           {workflow.error && <p role="alert" className="error">{workflow.error}</p>}
-          {canWrite && ['running', 'queued', 'planning', 'waiting_approval'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
+          {canWrite && <div className="workflow-actions-bar">
+            {['running', 'queued'].includes(workflow.status) && (
+              <button className="pause-btn" type="button" disabled={busy} onClick={() => pauseWorkflow(workflow.id)}>
+                <Pause size={13}/> Pause workflow
+              </button>
+            )}
+            {workflow.status === 'paused' && (
+              <button className="resume-btn" type="button" disabled={busy} onClick={() => resumeWorkflow(workflow.id)}>
+                <PlayCircle size={13}/> Resume from checkpoint
+              </button>
+            )}
+            {['failed', 'cancelled'].includes(workflow.status) && (
+              <button className="retry-btn" type="button" disabled={busy} onClick={() => retryWorkflow(workflow.id)}>
+                <RotateCcw size={13}/> Retry (preserve checkpoint)
+              </button>
+            )}
+            {['running', 'queued', 'planning', 'waiting_approval', 'paused'].includes(workflow.status) && (
+              <button className="danger" type="button" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>
+                Cancel workflow
+              </button>
+            )}
+          </div>}
         </>}
       </section></div>
       <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">RESTRICTED TOOLS / RESEARCH</div><h2>Search approved sources</h2></div><Activity size={18}/></div>
@@ -800,6 +851,105 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
               </div>
             )}
           </div>
+        )}
+      </section>
+      <section className="panel lower">
+        <div className="panel-head">
+          <div>
+            <div className="eyebrow">BENCHMARKS & EVALUATION MATRIX / US-09, FR-D05</div>
+            <h2>Standard benchmark evaluation & baselines</h2>
+          </div>
+          <BarChart3 size={18}/>
+        </div>
+        <p className="helper">
+          PRD Section 14 & 15: Standardized scientific evaluation measuring task success rate, parallel speedup, and checkpoint recovery rate across Fixed Routing vs. Adaptive Multi-Agent Orchestration. Telemetry and score bounds are calibrated deterministically.
+        </p>
+
+        <div className="benchmark-actions">
+          <button
+            className="secondary"
+            type="button"
+            disabled={busy || !canWrite}
+            onClick={() => runBenchmark('fixed')}
+          >
+            <Play size={13}/> Run Fixed Baseline
+          </button>
+          <button
+            className="primary"
+            type="button"
+            disabled={busy || !canWrite}
+            onClick={() => runBenchmark('adaptive')}
+          >
+            <BrainCircuit size={13}/> Run Adaptive Orchestrator
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => action(async () => {
+              const updated = await request<BenchmarkSummary>('/benchmarks/summary');
+              setBenchmarkSummary(updated);
+            })}
+          >
+            <RefreshCw size={13}/> Refresh matrix
+          </button>
+        </div>
+
+        {benchmarkSummary && (
+          <>
+            <div className="bench-metrics-grid">
+              <div className="bench-metric-card">
+                <span>PARALLEL SPEEDUP RATIO</span>
+                <b>{benchmarkSummary.parallel_speedup.toFixed(2)}x</b>
+                <small className="muted">Mean seq. elapsed / mean adaptive elapsed</small>
+              </div>
+              <div className="bench-metric-card">
+                <span>CHECKPOINT RECOVERY RATE</span>
+                <b>{(benchmarkSummary.recovery_metrics.recovery_rate * 100).toFixed(1)}%</b>
+                <small className="muted">{benchmarkSummary.recovery_metrics.resumed_from_checkpoint} of {benchmarkSummary.recovery_metrics.resumed_from_checkpoint + benchmarkSummary.recovery_metrics.currently_paused} paused runs resumed</small>
+              </div>
+              <div className="bench-metric-card">
+                <span>TOTAL EXECUTIONS</span>
+                <b>{benchmarkSummary.total_executions}</b>
+                <small className="muted">Standard Orchestration Suite v1</small>
+              </div>
+            </div>
+
+            <h3 style={{marginTop:20}}>Baseline comparison (Fixed vs. Adaptive)</h3>
+            <table className="document-table">
+              <thead>
+                <tr>
+                  <th>Variant</th>
+                  <th>Runs</th>
+                  <th>Success Rate</th>
+                  <th>Mean Latency</th>
+                  <th>Mean Score</th>
+                  <th>Total Cost (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Fixed Routing Baseline</strong></td>
+                  <td>{benchmarkSummary.baselines.fixed.runs}</td>
+                  <td>{(benchmarkSummary.baselines.fixed.success_rate * 100).toFixed(1)}%</td>
+                  <td>{benchmarkSummary.baselines.fixed.mean_duration_ms.toFixed(0)} ms</td>
+                  <td>{(benchmarkSummary.baselines.fixed.mean_score * 100).toFixed(1)}%</td>
+                  <td>${benchmarkSummary.baselines.fixed.total_cost_usd.toFixed(4)}</td>
+                </tr>
+                <tr>
+                  <td><strong>Adaptive Orchestrator</strong></td>
+                  <td>{benchmarkSummary.baselines.adaptive.runs}</td>
+                  <td>{(benchmarkSummary.baselines.adaptive.success_rate * 100).toFixed(1)}%</td>
+                  <td>{benchmarkSummary.baselines.adaptive.mean_duration_ms.toFixed(0)} ms</td>
+                  <td>{(benchmarkSummary.baselines.adaptive.mean_score * 100).toFixed(1)}%</td>
+                  <td>${benchmarkSummary.baselines.adaptive.total_cost_usd.toFixed(4)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="helper" style={{marginTop:12}}>
+              {benchmarkSummary.evaluation_notes}
+            </p>
+          </>
         )}
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>

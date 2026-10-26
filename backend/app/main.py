@@ -4,7 +4,7 @@ import os
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .approvals import (
@@ -27,6 +27,7 @@ from .approvals import (
 )
 from .auth import Identity, current_identity
 from .auth import router as auth_router
+from .benchmarks import execute_benchmark_suite, get_benchmark_summary
 from .data_analysis import (
     MAX_UPLOAD_BYTES,
     AnalysisError,
@@ -56,6 +57,7 @@ from .migrate import require_current_schema
 from .models import (
     Approval,
     Artifact,
+    BenchmarkResult,
     CodeSandboxRun,
     DatasetAnalysis,
     DocumentChunk,
@@ -68,12 +70,20 @@ from .models import (
     TaskAttempt,
     User,
     VerificationReport,
+    WorkerHeartbeat,
     Workflow,
     now,
 )
 from .planner import demo_plan
 from .planning import PlannerProposal
 from .planning_runtime import add_tasks, initial_state
+from .recovery import (
+    RecoveryError,
+    get_workflow_checkpoint,
+    pause_workflow,
+    resume_workflow,
+    retry_workflow,
+)
 from .reporting import (
     ReportingError,
     ReportSynthesizeRequest,
@@ -161,6 +171,17 @@ class CreateWorkflow(BaseModel):
     planning_deadline_seconds: int = Field(default=60, ge=5, le=180, strict=True)
 
 
+class WorkflowRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preserve_checkpoint: bool = True
+
+
+class BenchmarkExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    set_id: str | None = None
+    routing_mode: Literal["fixed", "adaptive"] | None = None
+
+
 def event(db, wid, kind, details=None):
     db.add(Event(workflow_id=wid, kind=kind, details=details or {}))
 
@@ -200,6 +221,7 @@ def serialize(
         "error": w.error,
         "planning": w.planning,
         "plan": w.execution_plan,
+        "recovery_metadata": w.recovery_metadata,
         "created_at": w.created_at.isoformat() if w.created_at else None,
         "tasks": [
             {
@@ -238,8 +260,39 @@ def serialize(
 
 
 @app.get("/health")
+@app.get("/healthz")
 def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "service": "orqestra-api",
+        "version": "1.0.0",
+        "timestamp": now().isoformat(),
+    }
+
+
+@app.get("/readyz")
+def readyz(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as err:
+        raise HTTPException(503, f"Database connectivity check failed: {err}") from None
+
+    active_threshold = now() - timedelta(seconds=60)
+    active_workers = (
+        db.scalar(
+            select(func.count(WorkerHeartbeat.id)).where(
+                WorkerHeartbeat.seen_at >= active_threshold
+            )
+        )
+        or 0
+    )
+    return {
+        "status": "ready",
+        "database": "connected",
+        "schema_revision": "0013",
+        "active_workers": active_workers,
+        "timestamp": now().isoformat(),
+    }
 
 
 @app.get("/api/v1/planner/config")
@@ -1209,6 +1262,65 @@ def cancel_workflow(
     return {"workflow_id": wid, "status": "cancelled"}
 
 
+@app.post("/api/v1/workflows/{wid}/pause")
+@app.post("/api/v1/runs/{wid}/pause")
+def pause_run(
+    wid: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity, ("owner", "member"))
+    try:
+        w = pause_workflow(db, wid, identity.user.id)
+        return {"workflow_id": wid, "status": w.status, "checkpoint": w.recovery_metadata}
+    except RecoveryError as err:
+        raise HTTPException(err.status_code, err.message) from None
+
+
+@app.post("/api/v1/workflows/{wid}/resume")
+@app.post("/api/v1/runs/{wid}/resume")
+def resume_run(
+    wid: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity, ("owner", "member"))
+    try:
+        w = resume_workflow(db, wid, identity.user.id)
+        return {"workflow_id": wid, "status": w.status, "checkpoint": w.recovery_metadata}
+    except RecoveryError as err:
+        raise HTTPException(err.status_code, err.message) from None
+
+
+@app.post("/api/v1/workflows/{wid}/retry")
+@app.post("/api/v1/runs/{wid}/retry")
+def retry_run(
+    wid: str,
+    body: WorkflowRetryRequest = WorkflowRetryRequest(),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity, ("owner", "member"))
+    try:
+        w = retry_workflow(db, wid, identity.user.id, preserve_checkpoint=body.preserve_checkpoint)
+        return {"workflow_id": wid, "status": w.status, "checkpoint": w.recovery_metadata}
+    except RecoveryError as err:
+        raise HTTPException(err.status_code, err.message) from None
+
+
+@app.get("/api/v1/workflows/{wid}/checkpoint")
+def checkpoint_run(
+    wid: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    visible_workflow(db, wid, identity, ("owner", "member", "viewer"))
+    try:
+        return get_workflow_checkpoint(db, wid)
+    except RecoveryError as err:
+        raise HTTPException(err.status_code, err.message) from None
+
+
 @app.get("/api/v1/workflows/{wid}/events")
 def get_events(
     wid: str,
@@ -1274,6 +1386,136 @@ async def stream_events(
             await asyncio.sleep(1)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.get("/api/v1/metrics/overview")
+def metrics_overview(
+    workspace_id: str = Query(...),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    total_workflows = (
+        db.scalar(select(func.count(Workflow.id)).where(Workflow.workspace_id == workspace_id)) or 0
+    )
+    by_status_raw = db.execute(
+        select(Workflow.status, func.count(Workflow.id))
+        .where(Workflow.workspace_id == workspace_id)
+        .group_by(Workflow.status)
+    ).all()
+    status_counts = {str(status): int(count) for status, count in by_status_raw}
+    active_threshold = now() - timedelta(seconds=60)
+    active_workers = (
+        db.scalar(
+            select(func.count(WorkerHeartbeat.id)).where(
+                WorkerHeartbeat.seen_at >= active_threshold
+            )
+        )
+        or 0
+    )
+    resumed_count = (
+        db.scalar(
+            select(func.count(Workflow.id)).where(
+                Workflow.workspace_id == workspace_id,
+                Workflow.recovery_metadata.is_not(None),
+                Workflow.recovery_metadata["resumed_from_checkpoint"].as_boolean().is_(True),
+            )
+        )
+        or 0
+    )
+    paused_count = status_counts.get("paused", 0)
+    eligible = resumed_count + paused_count
+    recovery_rate = round(resumed_count / eligible, 3) if eligible > 0 else 1.0
+
+    return {
+        "workspace_id": workspace_id,
+        "total_workflows": total_workflows,
+        "status_counts": status_counts,
+        "active_workers": active_workers,
+        "recovery_metrics": {
+            "resumed_from_checkpoint": resumed_count,
+            "currently_paused": paused_count,
+            "recovery_rate": recovery_rate,
+        },
+        "timestamp": now().isoformat(),
+    }
+
+
+@app.post("/api/v1/benchmarks/executions")
+def run_benchmarks(
+    body: BenchmarkExecutionRequest = BenchmarkExecutionRequest(),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    results = execute_benchmark_suite(
+        db=db, set_id=body.set_id, routing_mode_override=body.routing_mode
+    )
+    return {
+        "status": "completed",
+        "count": len(results),
+        "results": [
+            {
+                "id": r.id,
+                "case_id": r.benchmark_case_id,
+                "execution_id": r.execution_id,
+                "routing_mode": r.routing_mode,
+                "status": r.status,
+                "duration_ms": r.duration_ms,
+                "tokens_used": r.tokens_used,
+                "cost_usd": r.cost_usd,
+                "score": r.score,
+                "metadata": r.benchmark_metadata,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in results
+        ],
+    }
+
+
+@app.get("/api/v1/benchmarks/summary")
+def benchmark_summary(
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    return get_benchmark_summary(db)
+
+
+@app.get("/api/v1/benchmarks/executions/{execution_id}")
+def get_benchmark_execution(
+    execution_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    results = list(
+        db.scalars(
+            select(BenchmarkResult)
+            .where(BenchmarkResult.execution_id == execution_id)
+            .order_by(BenchmarkResult.created_at.asc())
+        ).all()
+    )
+    if not results:
+        raise HTTPException(404, "Benchmark execution not found")
+    return {
+        "execution_id": execution_id,
+        "count": len(results),
+        "results": [
+            {
+                "id": r.id,
+                "case_id": r.benchmark_case_id,
+                "routing_mode": r.routing_mode,
+                "status": r.status,
+                "duration_ms": r.duration_ms,
+                "tokens_used": r.tokens_used,
+                "cost_usd": r.cost_usd,
+                "score": r.score,
+                "metadata": r.benchmark_metadata,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in results
+        ],
+    }
 
 
 def next_db():

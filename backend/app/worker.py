@@ -166,7 +166,7 @@ def tick(worker_id: str = WORKER_ID) -> bool:
             (
                 task
                 for task in tasks
-                if task.status == "pending"
+                if task.status in ("pending", "ready")
                 and all(
                     parent in by_name and by_name[parent].status == "succeeded"
                     for parent in dependencies_by_id[task.id]
@@ -209,7 +209,7 @@ def tick(worker_id: str = WORKER_ID) -> bool:
                 )
                 return True
         if ready is None:
-            if not any(task.status == "running" for task in tasks):
+            if not any(task.status in ("running", "waiting_approval") for task in tasks):
                 fail_workflow(
                     db,
                     workflow,

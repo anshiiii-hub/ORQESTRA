@@ -72,3 +72,20 @@ main{min-width:0;flex:1;width:auto}.cards{grid-template-columns:repeat(4,minmax(
 .severity-pill.minor{background:#383216;color:#eed17b}
 @media(max-width:760px){.synth-form{grid-template-columns:1fr}}
 
+.status.paused{color:#e6ab5b}
+.readiness-pill{display:inline-flex;align-items:center;gap:6px;background:#0d181e;border:1px solid #1a3942;color:#8ce3d6;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:600;margin-top:10px}
+.status-dot{width:7px;height:7px;border-radius:50%}
+.status-dot.green{background:#38e09e;box-shadow:0 0 6px #38e09e}
+.benchmark-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.bench-metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:16px}
+.bench-metric-card{background:#0e1420;border:1px solid #1f2d3e;border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:4px}
+.bench-metric-card span{font-size:10px;color:#7e93a7;letter-spacing:1px;font-weight:700}
+.bench-metric-card b{font-size:22px;color:#8ee3e6;font-family:'Space Grotesk',sans-serif}
+.workflow-actions-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.pause-btn{background:#3b2d18;border:1px solid #6b522b;color:#f0cb65;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.pause-btn:hover{background:#4b3a1f}
+.resume-btn{background:#18362b;border:1px solid #285e49;color:#7ce0b2;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.resume-btn:hover{background:#214b3b}
+.retry-btn{background:#23243a;border:1px solid #3c3f68;color:#a8afff;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.retry-btn:hover{background:#2f314e}
+

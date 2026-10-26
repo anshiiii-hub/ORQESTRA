@@ -40,6 +40,7 @@ class Workflow(Base):
     execution_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recovery_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -364,4 +365,48 @@ class VerificationReport(Base):
     criteria_json: Mapped[list] = mapped_column(JSON)
     defects_json: Mapped[list] = mapped_column(JSON)
     summary: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BenchmarkSet(Base):
+    __tablename__ = "benchmark_sets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    version: Mapped[str] = mapped_column(String(20), default="1.0.0")
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BenchmarkCase(Base):
+    __tablename__ = "benchmark_cases"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    set_id: Mapped[str] = mapped_column(
+        ForeignKey("benchmark_sets.id", ondelete="CASCADE"), index=True
+    )
+    case_key: Mapped[str] = mapped_column(String(100), index=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    input_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    expected_output_pattern: Mapped[str] = mapped_column(String(255), default="")
+    routing_mode: Mapped[str] = mapped_column(String(16), default="fixed")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BenchmarkResult(Base):
+    __tablename__ = "benchmark_results"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    benchmark_case_id: Mapped[str] = mapped_column(
+        ForeignKey("benchmark_cases.id", ondelete="CASCADE"), index=True
+    )
+    workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    execution_id: Mapped[str] = mapped_column(String(36), index=True)
+    routing_mode: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(32))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    score: Mapped[float] = mapped_column(Float, default=1.0)
+    benchmark_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
