@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users} from 'lucide-react';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2} from 'lucide-react';
 import {API, ApiError, request, upload} from './api';
 import './style.css';
 
@@ -18,6 +18,10 @@ type ResearchResult = {id: string; status: string; query: string; sources: Resea
 type DatasetAnalysis = {id: string; workspace_id: string; filename: string; file_format: string; source_size_bytes: number; content_sha256: string; row_count: number; column_count: number; metadata: {analysis_version: string; formula_cells_treated_as_data: number}; profile: {rows: number; columns: {name: string; inferred_type: string; missing_count: number; distinct_count: number; example?: string; statistics?: {count: number; mean: number; min: number; max: number; sum: number}}[]}; chart_artifacts: {id: string; title: string}[]; csv_export_url: string};
 type SandboxConfiguration = {available: boolean; max_files: number; max_patch_files: number; max_input_bytes: number; max_checks: number; checks: string[]; memory_bytes: number; cpu_cores: number; pids: number; network: 'none'; host_mounts: number};
 type SandboxResult = {id: string; status: 'completed' | 'failed' | 'timed_out'; diff: string; artifact: {checks: {check: string; status: string; exit_code: number | null; stdout: string; stderr: string}[]; isolation: {network: string; host_mounts: number; memory_bytes?: number; cpu_cores?: number; pids?: number; wall_time_seconds?: number}}};
+type KnowledgeConfiguration = {available: boolean; max_file_bytes: number; max_text_chars: number; chunk_size: number; chunk_overlap: number; vector_dimension: number; supported_extensions: string[]; content_trust: 'untrusted'};
+type DocumentFileItem = {id: string; workspace_id: string; original_name: string; mime_type: string; sha256: string; size_bytes: number; status: string; chunk_count: number; created_at: string | null};
+type ChunkSearchResult = {chunk_id: string; file_id: string; filename: string; chunk_index: number; source_offset: number; score: number; content: string; metadata: {char_count?: number; word_count?: number}};
+type KnowledgeSearchResult = {workspace_id: string; query: string; total_matches: number; results: ChunkSearchResult[]};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -125,6 +129,11 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [sandboxPatch, setSandboxPatch] = useState('{\n  "main.py": "def add(a, b):\\n    return a + b\\n"\n}');
   const [sandboxCheck, setSandboxCheck] = useState('pytest');
   const [sandboxResult, setSandboxResult] = useState<SandboxResult | null>(null);
+  const [knowledgeConfiguration, setKnowledgeConfiguration] = useState<KnowledgeConfiguration | null>(null);
+  const [documents, setDocuments] = useState<DocumentFileItem[]>([]);
+  const [docUploadFile, setDocUploadFile] = useState<File | null>(null);
+  const [knowledgeQuery, setKnowledgeQuery] = useState('');
+  const [knowledgeResult, setKnowledgeResult] = useState<KnowledgeSearchResult | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -170,10 +179,16 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const sandboxPolicy = await request<SandboxConfiguration>('/sandbox/config', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setSandboxConfiguration(sandboxPolicy);
+        const knowledgePolicy = await request<KnowledgeConfiguration>('/knowledge/config', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setKnowledgeConfiguration(knowledgePolicy);
+        const fileList = await request<DocumentFileItem[]>(`/files?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setDocuments(fileList);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]);}
+          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]);}
           fail(error);
         }
       }
@@ -218,6 +233,32 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     });
     setSandboxResult(result);
   });
+  const uploadDocument = () => action(async () => {
+    if (!workspace || !canWrite || !docUploadFile) return;
+    const query = new URLSearchParams({workspace_id: workspace.id, filename: docUploadFile.name});
+    await upload<DocumentFileItem>(`/files/upload?${query.toString()}`, docUploadFile, session.csrf_token);
+    setDocUploadFile(null);
+  });
+  const reindexDoc = (id: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate(`/files/${id}/index`);
+  });
+  const deleteDoc = (id: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate(`/files/${id}`, undefined, 'DELETE');
+    if (knowledgeResult) {
+      setKnowledgeResult(prev => prev ? {...prev, results: prev.results.filter(r => r.file_id !== id)} : null);
+    }
+  });
+  const searchKnowledge = () => action(async () => {
+    if (!workspace || !knowledgeQuery.trim()) return;
+    const res = await mutate<KnowledgeSearchResult>('/knowledge/search', {
+      workspace_id: workspace.id,
+      query: knowledgeQuery,
+      limit: 5,
+    });
+    setKnowledgeResult(res);
+  });
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
   return <div className="shell">
@@ -231,7 +272,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 10 · Local development</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 11 · Document memory and retrieval</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -299,6 +340,47 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         {!sandboxConfiguration?.available && <p className="helper">Sandbox execution is off. Enable it only after configuring a dedicated Docker Engine with TLS and building the pinned runtime image.</p>}
         <div className="sandbox-form"><div><label htmlFor="sandbox-files">Baseline project files (JSON)</label><textarea id="sandbox-files" className="code-input" rows={9} value={sandboxFiles} onChange={event => setSandboxFiles(event.target.value)} disabled={!canWrite || busy}/></div><div><label htmlFor="sandbox-patch">Proposed patch files (JSON)</label><textarea id="sandbox-patch" className="code-input" rows={7} value={sandboxPatch} onChange={event => setSandboxPatch(event.target.value)} disabled={!canWrite || busy}/></div><div className="sandbox-actions"><label htmlFor="sandbox-check">Check to run</label><select id="sandbox-check" value={sandboxCheck} onChange={event => setSandboxCheck(event.target.value)} disabled={!canWrite || busy}><option value="pytest">pytest</option><option value="unittest">unittest</option><option value="compileall">compileall</option></select><button className="secondary" type="button" onClick={runSandbox} disabled={!canWrite || busy || !sandboxConfiguration?.available}>Run isolated check</button></div></div>
         {sandboxResult && <div className="sandbox-result"><div className="agent-card-head"><strong>Run {sandboxResult.id.slice(0, 8)}</strong><span className={`status ${sandboxResult.status}`}>{sandboxResult.status.toUpperCase()}</span></div><p className="helper">Network: {sandboxResult.artifact.isolation.network} · Host mounts: {sandboxResult.artifact.isolation.host_mounts}</p><h3>Proposed diff</h3><pre className="output">{sandboxResult.diff || 'No changes in the proposed patch.'}</pre>{sandboxResult.artifact.checks.map(check => <article className="agent-card" key={check.check}><strong>{check.check} · {check.status}{check.exit_code === null ? '' : ` · exit ${check.exit_code}`}</strong>{check.stdout && <pre className="output">{check.stdout}</pre>}{check.stderr && <pre className="output error">{check.stderr}</pre>}</article>)}</div>}
+      </section>
+      <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">DOCUMENT MEMORY / KNOWLEDGE RETRIEVAL</div><h2>Workspace document index</h2></div><Database size={18}/></div>
+        <p className="helper">Upload reference documents (.txt, .md, .py, .csv, .pdf) up to 5 MiB. Files are partitioned into chunks with source offsets and deterministic vector embeddings. Content is strictly scoped to this workspace and treated as untrusted evidence.</p>
+        <div className="dataset-upload">
+          <label htmlFor="doc-file">Add reference file</label>
+          <input id="doc-file" type="file" accept=".txt,.text,.md,.markdown,.csv,.tsv,.json,.py,.js,.ts,.jsx,.tsx,.html,.css,.yaml,.yml,.sql,.sh,.pdf" onChange={event => setDocUploadFile(event.target.files?.[0] || null)} disabled={!canWrite || busy}/>
+          <button className="secondary" type="button" onClick={uploadDocument} disabled={!canWrite || busy || !docUploadFile}>Upload & index</button>
+        </div>
+        {documents.length > 0 && <table className="document-table">
+          <thead><tr><th>DOCUMENT</th><th>FORMAT</th><th>SIZE</th><th>CHUNKS</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
+          <tbody>{documents.map(doc => <tr key={doc.id}>
+            <td><strong>{doc.original_name}</strong><br/><code>SHA-256 {doc.sha256.slice(0, 12)}…</code></td>
+            <td><code>{doc.mime_type}</code></td>
+            <td>{(doc.size_bytes / 1024).toFixed(1)} KiB</td>
+            <td><span className="score-pill">{doc.chunk_count} chunk{doc.chunk_count === 1 ? '' : 's'}</span></td>
+            <td><span className={`availability ${doc.status === 'indexed' ? 'ready' : 'offline'}`}>{doc.status}</span></td>
+            <td><div className="document-actions">{canWrite && <><button className="secondary" type="button" title="Re-index document" onClick={() => reindexDoc(doc.id)} disabled={busy}><RefreshCw size={13}/></button><button className="danger" style={{marginTop:0,padding:'7px 10px'}} type="button" title="Delete document" onClick={() => deleteDoc(doc.id)} disabled={busy}><Trash2 size={13}/></button></>}</div></td>
+          </tr>)}</tbody>
+        </table>}
+        <form className="knowledge-search-form" onSubmit={event => {event.preventDefault(); searchKnowledge();}}>
+          <div>
+            <label htmlFor="knowledge-search">Query document memory</label>
+            <input id="knowledge-search" required maxLength={500} placeholder="Search workspace documents by terms or semantic topic…" value={knowledgeQuery} onChange={event => setKnowledgeQuery(event.target.value)} disabled={busy}/>
+          </div>
+          <button className="secondary" disabled={busy || !knowledgeQuery.trim()}><Search size={14}/> Search memory</button>
+        </form>
+        {knowledgeResult && <div className="knowledge-results">
+          <div className="panel-head" style={{marginBottom:10}}><strong>{knowledgeResult.total_matches} matched {knowledgeResult.total_matches === 1 ? 'chunk' : 'chunks'} for &ldquo;{knowledgeResult.query}&rdquo;</strong></div>
+          {knowledgeResult.results.length === 0 ? <p className="muted">No relevant chunks found in this workspace’s indexed documents.</p> : knowledgeResult.results.map(chunk => <article className="agent-card" key={chunk.chunk_id}>
+            <div className="agent-card-head">
+              <div>
+                <strong>{chunk.filename}</strong> <small style={{marginLeft:8}}>Chunk #{chunk.chunk_index} · Source char offset {chunk.source_offset}</small>
+              </div>
+              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                <span className="untrusted-tag">untrusted evidence</span>
+                <span className="score-pill">Relevance {(chunk.score * 100).toFixed(1)}%</span>
+              </div>
+            </div>
+            <pre className="output" style={{marginTop:12,maxHeight:160}}>{chunk.content}</pre>
+          </article>)}
+        </div>}
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>

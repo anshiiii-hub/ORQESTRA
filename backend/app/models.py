@@ -238,3 +238,37 @@ class WorkerHeartbeat(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     agent_versions: Mapped[dict] = mapped_column(JSON)
+
+
+class DocumentFile(Base):
+    __tablename__ = "files"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    original_name: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(128))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="uploaded", index=True)
+    stored_text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("file_id", "chunk_index", name="uq_document_chunk_file_index"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    source_offset: Mapped[int] = mapped_column(Integer)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

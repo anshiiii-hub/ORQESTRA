@@ -26,11 +26,28 @@ from .data_analysis import (
 from .db import SessionLocal, get_db
 from .export_contracts import schemas
 from .heartbeats import agent_catalog
+from .knowledge import (
+    MAX_UPLOAD_BYTES as MAX_KNOWLEDGE_BYTES,
+)
+from .knowledge import (
+    KnowledgeError,
+    KnowledgeSearchRequest,
+    extract_text_and_validate,
+    index_file_chunks,
+    knowledge_settings,
+    search_workspace_chunks,
+    serialize_document_file,
+)
+from .knowledge import (
+    validate_upload_filename as validate_knowledge_filename,
+)
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import (
     CodeSandboxRun,
     DatasetAnalysis,
+    DocumentChunk,
+    DocumentFile,
     Event,
     Membership,
     ResearchRun,
@@ -575,6 +592,179 @@ def get_sandbox_run(
     if run is None or membership is None:
         raise HTTPException(404, "Sandbox run not found")
     return serialize_sandbox_run(run)
+
+
+@app.get("/api/v1/knowledge/config")
+def knowledge_configuration(identity: Identity = Depends(current_identity)):
+    return knowledge_settings().model_dump()
+
+
+@app.post("/api/v1/files/upload", status_code=201)
+async def upload_document_file(
+    request: Request,
+    workspace_id: str = Query(min_length=1, max_length=36),
+    filename: str = Query(min_length=1, max_length=255),
+    auto_index: bool = Query(default=True),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity, ("owner", "member"))
+    try:
+        safe_name = validate_knowledge_filename(filename)
+    except KnowledgeError as error:
+        raise HTTPException(422, str(error)) from None
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_KNOWLEDGE_BYTES:
+                raise HTTPException(413, "The file exceeds the 5 MiB limit")
+        except ValueError:
+            raise HTTPException(400, "Invalid upload length") from None
+
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > MAX_KNOWLEDGE_BYTES:
+            raise HTTPException(413, "The file exceeds the 5 MiB limit")
+
+    try:
+        text, mime_type, size, sha256 = extract_text_and_validate(safe_name, bytes(content))
+    except KnowledgeError as error:
+        status = 413 if error.code == "file_too_large" else 422
+        raise HTTPException(status, str(error)) from None
+
+    doc_file = DocumentFile(
+        workspace_id=workspace_id,
+        uploaded_by=identity.user.id,
+        original_name=safe_name,
+        mime_type=mime_type,
+        sha256=sha256,
+        size_bytes=size,
+        status="uploaded",
+        stored_text=text,
+    )
+    db.add(doc_file)
+    db.flush()
+
+    chunk_count = 0
+    if auto_index:
+        chunk_count = index_file_chunks(db, doc_file)
+
+    db.commit()
+    db.refresh(doc_file)
+    return serialize_document_file(doc_file, chunk_count)
+
+
+@app.get("/api/v1/files")
+def list_document_files(
+    workspace_id: str = Query(min_length=1, max_length=36),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import func
+
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    files = db.scalars(
+        select(DocumentFile)
+        .where(DocumentFile.workspace_id == workspace_id)
+        .order_by(DocumentFile.created_at.desc())
+    ).all()
+    chunk_counts: dict[str, int] = {
+        str(row[0]): int(row[1])
+        for row in db.execute(
+            select(DocumentChunk.file_id, func.count(DocumentChunk.id))
+            .where(DocumentChunk.workspace_id == workspace_id)
+            .group_by(DocumentChunk.file_id)
+        ).all()
+    }
+    return [serialize_document_file(f, chunk_counts.get(f.id, 0)) for f in files]
+
+
+@app.get("/api/v1/files/{file_id}")
+def get_document_file(
+    file_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import func
+
+    from .auth import require_role
+
+    file = db.get(DocumentFile, file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    require_role(db, file.workspace_id, identity)
+    chunk_count = (
+        db.scalar(select(func.count(DocumentChunk.id)).where(DocumentChunk.file_id == file.id)) or 0
+    )
+    return serialize_document_file(file, chunk_count)
+
+
+@app.post("/api/v1/files/{file_id}/index")
+def reindex_document_file(
+    file_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    file = db.get(DocumentFile, file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    require_role(db, file.workspace_id, identity, ("owner", "member"))
+    chunk_count = index_file_chunks(db, file)
+    db.commit()
+    db.refresh(file)
+    return serialize_document_file(file, chunk_count)
+
+
+@app.delete("/api/v1/files/{file_id}")
+def delete_document_file(
+    file_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import delete as sa_delete
+
+    from .auth import require_role
+
+    file = db.get(DocumentFile, file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    require_role(db, file.workspace_id, identity, ("owner", "member"))
+    db.execute(sa_delete(DocumentChunk).where(DocumentChunk.file_id == file.id))
+    db.delete(file)
+    db.commit()
+    return {"deleted": True, "file_id": file_id}
+
+
+@app.post("/api/v1/knowledge/search")
+def search_knowledge(
+    body: KnowledgeSearchRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity)
+    results = search_workspace_chunks(
+        db,
+        body.workspace_id,
+        body.query,
+        limit=body.limit,
+        file_id=body.file_id,
+    )
+    return {
+        "workspace_id": body.workspace_id,
+        "query": body.query,
+        "total_matches": len(results),
+        "results": [r.model_dump() for r in results],
+    }
 
 
 @app.get("/api/v1/agents")
