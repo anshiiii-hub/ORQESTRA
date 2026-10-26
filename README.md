@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 06 (leased DAG scheduler)
+# ORQESTRA AI — Checkpoint 07 (adaptive capability routing)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 adds normalized dependency edges, durable execution attempts, expiring worker leases, fenced result publication, concurrent ready-node execution, and prompt cancellation. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
+This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 adds fixed/adaptive routing baselines, policy filters, weighted scores, and stored selection explanations. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -13,6 +13,7 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 - Normalized task dependency edges, durable per-run attempt records, idempotency keys, expiring worker leases, and stale-result fencing.
 - Multiple worker replicas can claim independent ready tasks concurrently; expired leases are recovered without interrupting another live worker.
 - Scheduler lease and cancellation behavior, concurrency verification, and scale-out instructions are documented in [the scheduler guide](docs/scheduler.md).
+- Capability routing filters, deterministic weighted scores, fixed/adaptive baselines, and persisted decision factors; see [routing policy](docs/routing.md).
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
@@ -40,7 +41,7 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): 181 local tests pass and two PostgreSQL-only lease/concurrency tests are skipped locally and included in CI. Ruff, Mypy, schema drift checks, and the frontend production build pass. Checkpoint 05 passed PostgreSQL planning/runtime checks and GitHub Actions. Live-model quality remains unmeasured; no paid API calls were made.
+- Validation status (26 October 2026): 187 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, schema checks, and the frontend production build pass. Checkpoint 07 PostgreSQL checks are pending CI. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
 - Passwords use salted scrypt. Session cookies are HttpOnly and SameSite=Lax; authenticated writes require a session-bound CSRF token and trusted origin. Enable secure cookies for HTTPS.
@@ -54,8 +55,8 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Next checkpoints
-1. Checkpoints 07–08: adaptive routing and restricted research tools.
-3. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
+1. Checkpoint 08: restricted research tools.
+2. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
 
 ## Repository
 ```

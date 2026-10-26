@@ -2,12 +2,13 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from .heartbeats import HEARTBEAT_TTL
 from .llm import (
     Completion,
     OpenAIPlannerProvider,
@@ -16,9 +17,11 @@ from .llm import (
     money,
     planner_settings,
 )
-from .models import Event, Task, TaskDependency, Workflow, now
+from .models import Event, Task, TaskAttempt, TaskDependency, WorkerHeartbeat, Workflow, now
 from .planner import demo_plan
 from .planning import PlannerProposal, input_token_bound, planning_messages
+from .registry import REGISTRY, AgentRegistry
+from .routing import RoutingError, RoutingHistory, select_route
 
 MAX_PLANNING_ATTEMPTS = 2
 
@@ -44,10 +47,104 @@ def initial_state(
     }
 
 
-def add_tasks(db: Session, workflow: Workflow, proposal: PlannerProposal) -> None:
+def routing_profiles(
+    db: Session, workspace_id: str | None, capabilities: set[str], registry: AgentRegistry
+) -> tuple[dict[str, RoutingHistory], dict[str, int]]:
+    rows = db.execute(
+        select(
+            Task.agent,
+            TaskAttempt.status,
+            TaskAttempt.started_at,
+            TaskAttempt.finished_at,
+            TaskAttempt.result_envelope,
+        )
+        .join(Task, TaskAttempt.task_id == Task.id)
+        .join(Workflow, Task.workflow_id == Workflow.id)
+        .where(
+            Workflow.workspace_id == workspace_id,
+            Task.capability.in_(capabilities),
+            TaskAttempt.status.in_(("succeeded", "failed")),
+        )
+        .order_by(desc(TaskAttempt.started_at))
+        .limit(1000)
+    ).all()
+    grouped: dict[str, list] = {}
+    for row in rows:
+        grouped.setdefault(row.agent, []).append(row)
+    histories = {}
+    for agent_id, attempts in grouped.items():
+        latencies = []
+        costs = []
+        for attempt in attempts:
+            if attempt.finished_at and attempt.started_at:
+                started = attempt.started_at
+                finished = attempt.finished_at
+                if started.tzinfo is None and finished.tzinfo is not None:
+                    started = started.replace(tzinfo=finished.tzinfo)
+                if finished.tzinfo is None and started.tzinfo is not None:
+                    finished = finished.replace(tzinfo=started.tzinfo)
+                latencies.append(max((finished - started).total_seconds() * 1000, 0))
+            usage = (attempt.result_envelope or {}).get("usage", {})
+            try:
+                costs.append(Decimal(str(usage.get("cost_usd", 0))))
+            except (InvalidOperation, TypeError, ValueError):
+                costs.append(Decimal(0))
+        histories[agent_id] = RoutingHistory(
+            completed=len(attempts),
+            succeeded=sum(attempt.status == "succeeded" for attempt in attempts),
+            average_latency_ms=sum(latencies) / len(latencies) if latencies else 0,
+            average_cost_usd=sum(costs, Decimal(0)) / len(costs) if costs else Decimal(0),
+        )
+
+    counts = {agent.agent_id: 0 for agent in registry.all()}
+    cutoff = now() - timedelta(seconds=HEARTBEAT_TTL)
+    for heartbeat in db.scalars(select(WorkerHeartbeat).where(WorkerHeartbeat.seen_at >= cutoff)):
+        for agent in registry.all():
+            if heartbeat.agent_versions.get(agent.agent_id) == {
+                "agent_version": agent.version,
+                "schema_version": agent.schema_version,
+            }:
+                counts[agent.agent_id] += 1
+    return histories, counts
+
+
+def add_tasks(
+    db: Session, workflow: Workflow, proposal: PlannerProposal, registry: AgentRegistry = REGISTRY
+) -> None:
     planned = proposal.ordered_tasks()
+    by_planned_name = {task.id: task for task in planned}
+    histories, worker_counts = routing_profiles(
+        db, workflow.workspace_id, {task.capability for task in planned}, registry
+    )
+    routed_tasks = []
+    decisions = {}
+    for task in planned:
+        required_context = {
+            alias: by_planned_name[parent].capability
+            for alias, parent in task.input_bindings.items()
+            if parent in by_planned_name
+        }
+        if len(required_context) != len(task.input_bindings):
+            raise PlanningError("routing_input_invalid", "Routing input dependencies are invalid")
+        try:
+            selected, decision = select_route(
+                mode=workflow.routing_mode or "fixed",
+                requested_agent=task.agent,
+                capability=task.capability,
+                schema_version=task.schema_version,
+                agent_version=task.agent_version,
+                required_context=required_context,
+                registry=registry,
+                histories=histories,
+                worker_counts=worker_counts,
+            )
+        except RoutingError as error:
+            raise PlanningError(error.code, str(error)) from None
+        routed_tasks.append(task.model_copy(update={"agent": selected.agent_id}))
+        decisions[task.id] = decision
+
     rows = []
-    for ordinal, task in enumerate(planned):
+    for ordinal, task in enumerate(routed_tasks):
         row = Task(
             workflow_id=workflow.id,
             name=task.id,
@@ -57,13 +154,14 @@ def add_tasks(db: Session, workflow: Workflow, proposal: PlannerProposal) -> Non
             schema_version=task.schema_version,
             dependencies=task.dependencies,
             input_bindings=task.input_bindings,
+            routing_decision=decisions[task.id],
             ordinal=ordinal,
         )
         db.add(row)
         rows.append(row)
     db.flush()
     by_name = {row.name: row for row in rows}
-    for task, row in zip(planned, rows, strict=True):
+    for task, row in zip(routed_tasks, rows, strict=True):
         for dependency in task.dependencies:
             db.add(
                 TaskDependency(
@@ -72,7 +170,19 @@ def add_tasks(db: Session, workflow: Workflow, proposal: PlannerProposal) -> Non
                     dependency_task_id=by_name[dependency].id,
                 )
             )
-    workflow.execution_plan = proposal.model_dump(mode="json")
+        db.add(
+            Event(
+                workflow_id=workflow.id,
+                kind="route_selected",
+                details={"task": task.id, **decisions[task.id]},
+            )
+        )
+    routed_proposal = PlannerProposal(
+        schema_version=proposal.schema_version,
+        tasks=routed_tasks,
+        final_task_id=proposal.final_task_id,
+    )
+    workflow.execution_plan = routed_proposal.model_dump(mode="json")
 
 
 def copy_state(workflow: Workflow) -> dict:

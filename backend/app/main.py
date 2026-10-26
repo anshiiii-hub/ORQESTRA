@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -78,6 +78,7 @@ class CreateWorkflow(BaseModel):
     prompt: str = Field(min_length=3, max_length=3000)
     csv_text: str = Field(min_length=3, max_length=250000)
     planner_mode: Literal["offline", "llm"] = "offline"
+    routing_mode: Literal["fixed", "adaptive"] = "fixed"
     planning_max_tokens: int = Field(default=20000, ge=512, le=64000, strict=True)
     planning_max_cost_usd: float = Field(default=0.05, gt=0, le=1, allow_inf_nan=False, strict=True)
     planning_deadline_seconds: int = Field(default=60, ge=5, le=180, strict=True)
@@ -117,6 +118,7 @@ def serialize(
         "prompt": w.prompt,
         "status": w.status,
         "mode": w.mode,
+        "routing_mode": w.routing_mode,
         "output": w.output,
         "error": w.error,
         "planning": w.planning,
@@ -135,6 +137,7 @@ def serialize(
                 "status": t.status,
                 "dependencies": t.dependencies,
                 "attempts": t.attempts,
+                "routing_decision": t.routing_decision,
                 "execution_attempts": [
                     {
                         "number": attempt.attempt_number,
@@ -159,7 +162,7 @@ def serialize(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.6.0"}
+    return {"status": "ok", "version": "0.7.0"}
 
 
 @app.get("/api/v1/planner/config")
@@ -225,6 +228,7 @@ def create_workflow(
         workspace_id=body.workspace_id,
         created_by=identity.user.id,
         mode="csv_llm_plan" if settings else "csv_demo",
+        routing_mode=body.routing_mode,
     )
     db.add(w)
     db.flush()
@@ -236,9 +240,14 @@ def create_workflow(
             body.planning_deadline_seconds,
         )
     else:
-        add_tasks(
-            db, w, PlannerProposal(schema_version="1.0", tasks=plan.tasks, final_task_id="verify")
-        )
+        try:
+            add_tasks(
+                db,
+                w,
+                PlannerProposal(schema_version="1.0", tasks=plan.tasks, final_task_id="verify"),
+            )
+        except PlanningError:
+            raise HTTPException(503, "No agent satisfies the selected routing policy") from None
         w.planning = {
             "schema_version": "1.0",
             "provider": "offline",

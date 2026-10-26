@@ -4,6 +4,8 @@ Schema changes are managed by Alembic. API and worker startup check that the dat
 
 Revision `0005` adds task attempt history, worker lease fields, and normalized dependency edges. Existing JSON task dependencies are backfilled to relational rows; workflows, task results, and events are preserved.
 
+Revision `0006` adds a fixed-by-default routing baseline to workflows and stores the selected routing policy explanation on each task. Existing workflows stay on the fixed baseline.
+
 ## Fresh database
 
 ```sh

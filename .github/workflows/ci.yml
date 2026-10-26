@@ -41,7 +41,7 @@ jobs:
       - run: python -m app.export_contracts --check
       - run: pytest -q
       - name: PostgreSQL migrations, API and access control
-        run: pytest -q tests/test_migrations_api.py tests/test_auth_rbac.py tests/test_agent_runtime.py tests/test_planning_runtime.py tests/test_worker_leases.py
+        run: pytest -q tests/test_migrations_api.py tests/test_auth_rbac.py tests/test_agent_runtime.py tests/test_planning_runtime.py tests/test_worker_leases.py tests/test_routing.py
         env:
           TEST_DATABASE_URL: postgresql+psycopg://orqestra_test:disposable_ci_password@localhost:5432/orqestra_test
 
