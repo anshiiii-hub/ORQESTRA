@@ -163,6 +163,26 @@ class ResearchSource(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class DatasetAnalysis(Base):
+    __tablename__ = "dataset_analyses"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    file_format: Mapped[str] = mapped_column(String(8))
+    source_size_bytes: Mapped[int] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(Integer)
+    column_count: Mapped[int] = mapped_column(Integer)
+    metadata_json: Mapped[dict] = mapped_column(JSON)
+    profile_json: Mapped[dict] = mapped_column(JSON)
+    chart_artifacts: Mapped[list] = mapped_column(JSON)
+    normalized_csv: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

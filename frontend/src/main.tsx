@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BrainCircuit, CheckCircle2, Clock3, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users} from 'lucide-react';
-import {ApiError, request} from './api';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users} from 'lucide-react';
+import {API, ApiError, request, upload} from './api';
 import './style.css';
 
 type Role = 'owner' | 'member' | 'viewer';
@@ -15,6 +15,7 @@ type PlannerConfiguration = {llm_available: boolean; model: string | null; provi
 type ResearchConfiguration = {available: boolean; max_urls: number; max_response_bytes: number; max_timeout_seconds: number; content_trust: 'untrusted'};
 type ResearchSource = {id: string; url: string; title: string; excerpt: string; content_sha256: string | null; fetched_at: string | null; trust_level: 'untrusted'; status: 'fetched' | 'failed'; error_code: string | null};
 type ResearchResult = {id: string; status: string; query: string; sources: ResearchSource[]};
+type DatasetAnalysis = {id: string; workspace_id: string; filename: string; file_format: string; source_size_bytes: number; content_sha256: string; row_count: number; column_count: number; metadata: {analysis_version: string; formula_cells_treated_as_data: number}; profile: {rows: number; columns: {name: string; inferred_type: string; missing_count: number; distinct_count: number; example?: string; statistics?: {count: number; mean: number; min: number; max: number; sum: number}}[]}; chart_artifacts: {id: string; title: string}[]; csv_export_url: string};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -115,6 +116,8 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [researchQuery, setResearchQuery] = useState('');
   const [researchUrls, setResearchUrls] = useState('');
   const [researchResult, setResearchResult] = useState<ResearchResult | null>(null);
+  const [datasetFile, setDatasetFile] = useState<File | null>(null);
+  const [datasetAnalysis, setDatasetAnalysis] = useState<DatasetAnalysis | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -187,6 +190,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     const result = await mutate<ResearchResult>('/research/search', {workspace_id: workspace.id, query: researchQuery, urls});
     setResearchResult(result);
   });
+  const analyzeDataset = () => action(async () => {
+    if (!workspace || !canWrite || !datasetFile) return;
+    const query = new URLSearchParams({workspace_id: workspace.id, filename: datasetFile.name});
+    const result = await upload<DatasetAnalysis>(`/data-analysis/import?${query.toString()}`, datasetFile, session.csrf_token);
+    setDatasetAnalysis(result);
+  });
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
   return <div className="shell">
@@ -200,7 +209,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 07 · Local development</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 09 · Local development</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -254,6 +263,14 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           <small>{source.trust_level} · {source.fetched_at ? new Date(source.fetched_at).toLocaleString() : source.error_code} · SHA-256 {source.content_sha256 || 'unavailable'}</small>
           {source.excerpt && <p>{source.excerpt}</p>}
         </article>)}</div>}
+      </section>
+      <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">DATA ANALYSIS / CSV + XLSX</div><h2>Profile a dataset</h2></div><BarChart3 size={18}/></div>
+        <p className="helper">Upload a CSV or XLSX file up to 5 MiB. Analysis is capped at 5,000 rows and 100 columns. Formulas are treated as text; macros are not supported.</p>
+        <div className="dataset-upload"><label htmlFor="dataset-file">Dataset file</label><input id="dataset-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setDatasetFile(event.target.files?.[0] || null)} disabled={!canWrite || busy}/><button className="secondary" type="button" onClick={analyzeDataset} disabled={!canWrite || busy || !datasetFile}>Analyze dataset</button></div>
+        {datasetAnalysis && <div className="dataset-result"><div className="dataset-summary"><strong>{datasetAnalysis.filename}</strong><span>{datasetAnalysis.row_count.toLocaleString()} rows · {datasetAnalysis.column_count} columns · {datasetAnalysis.file_format.toUpperCase()}</span><code>SHA-256 {datasetAnalysis.content_sha256}</code><span>{datasetAnalysis.metadata.formula_cells_treated_as_data} formula-like cells were kept as text.</span><a href={`${API}${datasetAnalysis.csv_export_url}`} download={`${datasetAnalysis.id}.csv`}>Download reproducible CSV</a></div>
+          {datasetAnalysis.chart_artifacts.map(chart => <figure className="dataset-chart" key={chart.id}><figcaption>{chart.title}</figcaption><img src={`${API}/api/v1/data-analysis/${datasetAnalysis.id}/charts/${chart.id}.svg`} alt={chart.title}/></figure>)}
+          <div className="dataset-columns">{datasetAnalysis.profile.columns.map(column => <article className="agent-card" key={column.name}><strong>{column.name}</strong><small>{column.inferred_type} · {column.missing_count} missing · {column.distinct_count} distinct</small>{column.statistics && <small>Mean {column.statistics.mean} · Min {column.statistics.min} · Max {column.statistics.max} · Sum {column.statistics.sum}</small>}{column.example && <small>Example: {column.example}</small>}</article>)}</div>
+        </div>}
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>

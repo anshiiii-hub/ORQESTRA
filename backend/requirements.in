@@ -4,6 +4,8 @@ sqlalchemy==2.0.40
 psycopg[binary]==3.2.6
 pydantic==2.11.3
 redis==5.2.1
+pandas==2.2.3
+openpyxl==3.1.5
 pytest==8.3.5
 httpx==0.28.1
 alembic==1.15.2

@@ -10,19 +10,26 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import Identity, current_identity
 from .auth import router as auth_router
+from .data_analysis import (
+    MAX_UPLOAD_BYTES,
+    AnalysisError,
+    analyze_dataset,
+    validate_upload_filename,
+)
 from .db import SessionLocal, get_db
 from .export_contracts import schemas
 from .heartbeats import agent_catalog
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import (
+    DatasetAnalysis,
     Event,
     Membership,
     ResearchRun,
@@ -51,7 +58,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ORQESTRA AI", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="ORQESTRA AI", version="0.9.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("APP_ORIGIN", "http://localhost:5173")],
@@ -179,7 +186,7 @@ def serialize(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.8.0"}
+    return {"status": "ok", "version": "0.9.0"}
 
 
 @app.get("/api/v1/planner/config")
@@ -264,7 +271,9 @@ def search_research_sources(
         agent = ResearchAgent(gateway)
         prepared = gateway.prepare(body.urls)
     except ResearchError as error:
-        status_code = 503 if error.code in ("research_unavailable", "research_not_configured") else 422
+        status_code = (
+            503 if error.code in ("research_unavailable", "research_not_configured") else 422
+        )
         raise HTTPException(status_code, str(error)) from None
 
     cleaned_query = " ".join(body.query.split())
@@ -305,12 +314,16 @@ def search_research_sources(
             )
         )
     successful = sum(record.status == "fetched" for record in records)
-    run.status = "completed" if successful == len(records) else "partial" if successful else "failed"
+    run.status = (
+        "completed" if successful == len(records) else "partial" if successful else "failed"
+    )
     run.finished_at = now()
     db.commit()
     db.refresh(run)
     sources = db.scalars(
-        select(ResearchSource).where(ResearchSource.run_id == run.id).order_by(ResearchSource.position)
+        select(ResearchSource)
+        .where(ResearchSource.run_id == run.id)
+        .order_by(ResearchSource.position)
     ).all()
     return serialize_research(run, sources)
 
@@ -328,9 +341,136 @@ def get_research_run(
     if run is None or membership is None:
         raise HTTPException(404, "Research run not found")
     sources = db.scalars(
-        select(ResearchSource).where(ResearchSource.run_id == run_id).order_by(ResearchSource.position)
+        select(ResearchSource)
+        .where(ResearchSource.run_id == run_id)
+        .order_by(ResearchSource.position)
     ).all()
     return serialize_research(run, sources)
+
+
+def serialize_dataset_analysis(dataset: DatasetAnalysis):
+    return {
+        "id": dataset.id,
+        "workspace_id": dataset.workspace_id,
+        "filename": dataset.filename,
+        "file_format": dataset.file_format,
+        "source_size_bytes": dataset.source_size_bytes,
+        "content_sha256": dataset.content_sha256,
+        "row_count": dataset.row_count,
+        "column_count": dataset.column_count,
+        "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+        "metadata": dataset.metadata_json,
+        "profile": dataset.profile_json,
+        "chart_artifacts": [
+            {"id": chart["id"], "title": chart["title"]} for chart in dataset.chart_artifacts
+        ],
+        "csv_export_url": f"/api/v1/data-analysis/{dataset.id}/export.csv",
+    }
+
+
+@app.post("/api/v1/data-analysis/import", status_code=201)
+async def import_dataset(
+    request: Request,
+    workspace_id: str = Query(min_length=1, max_length=36),
+    filename: str = Query(min_length=1, max_length=255),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity, ("owner", "member"))
+    try:
+        safe_name = validate_upload_filename(filename)
+    except AnalysisError as error:
+        raise HTTPException(422, str(error)) from None
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_UPLOAD_BYTES:
+                raise HTTPException(413, "The upload exceeds the 5 MiB limit")
+        except ValueError:
+            raise HTTPException(400, "Invalid upload length") from None
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "The upload exceeds the 5 MiB limit")
+    try:
+        result = analyze_dataset(safe_name, bytes(content))
+    except AnalysisError as error:
+        status = 413 if error.code in ("file_too_large", "xlsx_expanded_too_large") else 422
+        raise HTTPException(status, str(error)) from None
+    dataset = DatasetAnalysis(
+        workspace_id=workspace_id,
+        created_by=identity.user.id,
+        filename=result.filename,
+        file_format=result.file_format,
+        source_size_bytes=result.source_size_bytes,
+        content_sha256=result.content_sha256,
+        row_count=result.row_count,
+        column_count=result.column_count,
+        metadata_json=result.metadata,
+        profile_json=result.profile,
+        chart_artifacts=result.chart_artifacts,
+        normalized_csv=result.normalized_csv,
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return serialize_dataset_analysis(dataset)
+
+
+def visible_dataset_analysis(db: Session, dataset_id: str, identity: Identity):
+    dataset = db.get(DatasetAnalysis, dataset_id)
+    membership = (
+        db.get(Membership, (dataset.workspace_id, identity.user.id))
+        if dataset is not None
+        else None
+    )
+    if dataset is None or membership is None:
+        raise HTTPException(404, "Dataset analysis not found")
+    return dataset
+
+
+@app.get("/api/v1/data-analysis/{dataset_id}")
+def get_dataset_analysis(
+    dataset_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    dataset = visible_dataset_analysis(db, dataset_id, identity)
+    return serialize_dataset_analysis(dataset) | {
+        "profile": dataset.profile_json,
+        "metadata": dataset.metadata_json,
+    }
+
+
+@app.get("/api/v1/data-analysis/{dataset_id}/export.csv")
+def export_dataset_csv(
+    dataset_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    dataset = visible_dataset_analysis(db, dataset_id, identity)
+    return Response(
+        dataset.normalized_csv,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{dataset.id}.csv"'},
+    )
+
+
+@app.get("/api/v1/data-analysis/{dataset_id}/charts/{chart_id}.svg")
+def get_dataset_chart(
+    dataset_id: str,
+    chart_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    dataset = visible_dataset_analysis(db, dataset_id, identity)
+    chart = next((item for item in dataset.chart_artifacts if item["id"] == chart_id), None)
+    if chart is None:
+        raise HTTPException(404, "Chart not found")
+    return Response(chart["svg"], media_type="image/svg+xml")
 
 
 @app.get("/api/v1/agents")

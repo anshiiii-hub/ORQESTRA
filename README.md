@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 08 (restricted research tools)
+# ORQESTRA AI — Checkpoint 09 (data analysis agent)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs a deterministic CSV workflow through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 adds an authenticated research gateway for operator-approved HTTPS sources. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
+This prototype runs deterministic analysis through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 added an authenticated research gateway for operator-approved HTTPS sources; Checkpoint 09 adds bounded CSV/XLSX ingest, deterministic profiling, chart artifacts, and normalized CSV exports. Offline planning remains the default and makes no provider calls. The full multi-agent LLM product remains planned. No paid AI account is necessary.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -15,6 +15,7 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 - Scheduler lease and cancellation behavior, concurrency verification, and scale-out instructions are documented in [the scheduler guide](docs/scheduler.md).
 - Capability routing filters, deterministic weighted scores, fixed/adaptive baselines, and persisted decision factors; see [routing policy](docs/routing.md).
 - Authenticated research requests with exact operator-managed host allowlists, public-address DNS pinning, HTTPS-only fetching, blocked redirects, bounded HTML/text extraction, and workspace-scoped provenance; see [restricted research tools](docs/research.md). Retrieved page text is always recorded as untrusted data.
+- Workspace-scoped CSV/XLSX imports with schema profiling, deterministic numeric statistics, generated SVG charts, content hashes, and reproducible safe CSV exports; see [data analysis](docs/data-analysis.md).
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
@@ -42,10 +43,11 @@ This prototype runs a deterministic CSV workflow through a persisted PostgreSQL 
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): 208 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
+- Validation status (26 October 2026): 224 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration tests, contract checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
 - Research fetches are disabled by default. Operators may set `RESEARCH_ENABLED=true` and a comma-separated exact host list in `RESEARCH_ALLOWED_DOMAINS`; the research endpoint is bounded to three URLs, 256 KiB per response, and six seconds per request. It accepts caller-provided URLs on approved domains; it does not crawl links or expose a general-purpose browser/search engine. Source excerpts remain untrusted and cannot grant tool permissions.
+- Dataset files are capped at 5 MiB, 5,000 rows, 100 columns, and 16,384 characters per cell. XLSX ZIP expansion and archive member counts are bounded. Formulas are read as text and escaped in CSV exports; macro-enabled formats are rejected. Uploaded source files are not retained, while normalized outputs, profiles, chart artifacts, and content hashes are stored in the owning workspace.
 - Passwords use salted scrypt. Session cookies are HttpOnly and SameSite=Lax; authenticated writes require a session-bound CSRF token and trusted origin. Enable secure cookies for HTTPS.
 - The UI polls REST every ~1.8 seconds. Optional SSE uses the session cookie, supports event cursors, and rechecks access during streaming.
 - Alembic manages the schema. API and worker startup require the current migration revision. Existing unversioned databases require explicit, schema-checked adoption; see [migration instructions](docs/database-migrations.md).
@@ -57,7 +59,7 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Next checkpoints
-1. Checkpoint 09: expanded research-agent and retrieval orchestration.
+1. Checkpoint 10: isolated coding agent and sandbox.
 2. Later checkpoints: expanded agents, reporting, durable recovery, benchmarks, and deployment.
 
 ## Repository

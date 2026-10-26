@@ -89,19 +89,28 @@ def _normalize_domain(value: str) -> str:
         if not ascii_domain or len(ascii_domain) > 253 or "." not in ascii_domain:
             raise ValueError
         labels = ascii_domain.split(".")
-        if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in labels):
+        if any(
+            not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+            for label in labels
+        ):
             raise ValueError
         if any(not re.fullmatch(r"[a-z0-9-]+", label) for label in labels):
             raise ValueError
         return ascii_domain
     except (UnicodeError, ValueError):
-        raise ResearchError("research_config_invalid", "Research domain configuration is invalid") from None
+        raise ResearchError(
+            "research_config_invalid", "Research domain configuration is invalid"
+        ) from None
 
 
 def research_settings(environ: dict[str, str] | None = None) -> ResearchSettings:
     values = os.environ if environ is None else environ
     enabled = values.get("RESEARCH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
-    raw_domains = [item.strip() for item in values.get("RESEARCH_ALLOWED_DOMAINS", "").split(",") if item.strip()]
+    raw_domains = [
+        item.strip()
+        for item in values.get("RESEARCH_ALLOWED_DOMAINS", "").split(",")
+        if item.strip()
+    ]
     domains = tuple(sorted({_normalize_domain(item) for item in raw_domains}))
     if enabled and not domains:
         raise ResearchError("research_not_configured", "Research is not configured")
@@ -110,15 +119,21 @@ def research_settings(environ: dict[str, str] | None = None) -> ResearchSettings
 
 def _resolve_public_ips(hostname: str) -> tuple[str, ...]:
     try:
-        entries = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
+        entries = socket.getaddrinfo(
+            hostname, 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
     except OSError:
-        raise ResearchError("research_dns_failed", "A research source could not be resolved") from None
+        raise ResearchError(
+            "research_dns_failed", "A research source could not be resolved"
+        ) from None
     addresses = set()
     for entry in entries:
         try:
             address = ipaddress.ip_address(str(entry[4][0]).split("%", 1)[0])
         except ValueError:
-            raise ResearchError("research_address_denied", "A research source address was rejected") from None
+            raise ResearchError(
+                "research_address_denied", "A research source address was rejected"
+            ) from None
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             address = address.ipv4_mapped
         if (
@@ -199,7 +214,9 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 def _fetch(prepared: PreparedURL) -> tuple[bytes, str]:
     deadline = time.monotonic() + FETCH_TIMEOUT_SECONDS
-    connection = _PinnedHTTPSConnection(prepared.hostname, prepared.pinned_ip, FETCH_TIMEOUT_SECONDS)
+    connection = _PinnedHTTPSConnection(
+        prepared.hostname, prepared.pinned_ip, FETCH_TIMEOUT_SECONDS
+    )
     try:
         connection.request(
             "GET",
@@ -219,19 +236,27 @@ def _fetch(prepared: PreparedURL) -> tuple[bytes, str]:
             raise ResearchError("research_fetch_failed", "A research source could not be fetched")
         content_type = (response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
         if content_type not in ("text/html", "text/plain"):
-            raise ResearchError("research_content_type_denied", "The research source type is not allowed")
+            raise ResearchError(
+                "research_content_type_denied", "The research source type is not allowed"
+            )
         length_header = response.getheader("Content-Length")
         if length_header is not None:
             try:
                 if int(length_header) < 0 or int(length_header) > MAX_RESPONSE_BYTES:
-                    raise ResearchError("research_response_too_large", "The research source is too large")
+                    raise ResearchError(
+                        "research_response_too_large", "The research source is too large"
+                    )
             except ValueError:
-                raise ResearchError("research_response_invalid", "The research source response is invalid") from None
+                raise ResearchError(
+                    "research_response_invalid", "The research source response is invalid"
+                ) from None
         body = bytearray()
         while len(body) <= MAX_RESPONSE_BYTES:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ResearchError("research_timeout", "The research source exceeded its time limit")
+                raise ResearchError(
+                    "research_timeout", "The research source exceeded its time limit"
+                )
             if connection.sock is not None:
                 connection.sock.settimeout(remaining)
             chunk = response.read1(min(8192, MAX_RESPONSE_BYTES + 1 - len(body)))
@@ -239,23 +264,41 @@ def _fetch(prepared: PreparedURL) -> tuple[bytes, str]:
                 break
             body.extend(chunk)
             if len(body) > MAX_RESPONSE_BYTES:
-                raise ResearchError("research_response_too_large", "The research source is too large")
+                raise ResearchError(
+                    "research_response_too_large", "The research source is too large"
+                )
         if time.monotonic() > deadline:
             raise ResearchError("research_timeout", "The research source exceeded its time limit")
         if length_header is not None and len(body) != int(length_header):
-            raise ResearchError("research_response_invalid", "The research source response was incomplete")
+            raise ResearchError(
+                "research_response_invalid", "The research source response was incomplete"
+            )
         return bytes(body), response.getheader("Content-Type") or content_type
     except ResearchError:
         raise
     except (http.client.HTTPException, OSError, ssl.SSLError, TimeoutError):
-        raise ResearchError("research_fetch_failed", "A research source could not be fetched safely") from None
+        raise ResearchError(
+            "research_fetch_failed", "A research source could not be fetched safely"
+        ) from None
     finally:
         connection.close()
 
 
 class _TextExtractor(HTMLParser):
     _BLOCKED = {"script", "style", "noscript", "svg", "iframe", "object", "template"}
-    _BLOCKS = {"address", "article", "blockquote", "br", "div", "h1", "h2", "h3", "li", "p", "section"}
+    _BLOCKS = {
+        "address",
+        "article",
+        "blockquote",
+        "br",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "li",
+        "p",
+        "section",
+    }
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -310,7 +353,9 @@ def _extract(body: bytes, content_type: str) -> tuple[str, str, str]:
             parser.feed(text)
             parser.close()
         except Exception:
-            raise ResearchError("research_parse_failed", "The research source could not be parsed") from None
+            raise ResearchError(
+                "research_parse_failed", "The research source could not be parsed"
+            ) from None
         title = _clean_text(" ".join(parser.title_parts))[:200]
         visible_text = _clean_text("\n".join(parser.text_parts))
     else:
