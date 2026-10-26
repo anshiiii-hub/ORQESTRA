@@ -55,6 +55,7 @@ from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import (
     Approval,
+    Artifact,
     CodeSandboxRun,
     DatasetAnalysis,
     DocumentChunk,
@@ -66,12 +67,22 @@ from .models import (
     Task,
     TaskAttempt,
     User,
+    VerificationReport,
     Workflow,
     now,
 )
 from .planner import demo_plan
 from .planning import PlannerProposal
 from .planning_runtime import add_tasks, initial_state
+from .reporting import (
+    ReportingError,
+    ReportSynthesizeRequest,
+    VerificationRequest,
+    serialize_artifact,
+    serialize_verification_report,
+    synthesize_workflow_report,
+    verify_deliverable,
+)
 from .research import (
     ResearchAgent,
     ResearchError,
@@ -912,6 +923,133 @@ def execute_tool(
     if result.get("status") == "waiting_approval":
         response.status_code = 202
     return result
+
+
+@app.post("/api/v1/reports/synthesize")
+def synthesize_report(
+    body: ReportSynthesizeRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        md_artifact, html_artifact, json_artifact = synthesize_workflow_report(
+            db=db,
+            workspace_id=body.workspace_id,
+            workflow_id=body.workflow_id,
+            title=body.title,
+            custom_sections=body.custom_sections,
+        )
+    except ReportingError as error:
+        raise HTTPException(404, str(error)) from None
+
+    return {
+        "status": "synthesized",
+        "artifacts": [
+            serialize_artifact(md_artifact),
+            serialize_artifact(html_artifact),
+            serialize_artifact(json_artifact),
+        ],
+    }
+
+
+@app.get("/api/v1/artifacts")
+def list_artifacts(
+    workspace_id: str = Query(min_length=1, max_length=36),
+    workflow_id: str | None = Query(default=None, max_length=36),
+    artifact_type: str | None = Query(default=None, max_length=64),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    stmt = select(Artifact).where(Artifact.workspace_id == workspace_id)
+    if workflow_id:
+        stmt = stmt.where(Artifact.workflow_id == workflow_id)
+    if artifact_type:
+        stmt = stmt.where(Artifact.artifact_type == artifact_type)
+    stmt = stmt.order_by(Artifact.created_at.desc())
+    artifacts = db.scalars(stmt).all()
+    return [serialize_artifact(a) for a in artifacts]
+
+
+@app.get("/api/v1/artifacts/{artifact_id}")
+def get_artifact_metadata(
+    artifact_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "Artifact not found")
+    require_role(db, artifact.workspace_id, identity)
+    return serialize_artifact(artifact)
+
+
+@app.get("/api/v1/artifacts/{artifact_id}/download")
+def download_artifact(
+    artifact_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    artifact = db.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "Artifact not found")
+    require_role(db, artifact.workspace_id, identity)
+
+    content_bytes = (
+        artifact.content_text.encode("utf-8") if artifact.content_text is not None else b""
+    )
+    return Response(
+        content=content_bytes,
+        media_type=artifact.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{artifact.name}"'},
+    )
+
+
+@app.post("/api/v1/verification/verify")
+def submit_verification(
+    body: VerificationRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        report = verify_deliverable(
+            db=db,
+            workspace_id=body.workspace_id,
+            workflow_id=body.workflow_id,
+            artifact_id=body.artifact_id,
+            custom_checks=body.custom_checks,
+        )
+    except ReportingError as error:
+        raise HTTPException(404, str(error)) from None
+
+    return serialize_verification_report(report)
+
+
+@app.get("/api/v1/verification/{verification_id}")
+def get_verification_report(
+    verification_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    report = db.get(VerificationReport, verification_id)
+    if report is None:
+        raise HTTPException(404, "Verification report not found")
+    require_role(db, report.workspace_id, identity)
+    return serialize_verification_report(report)
 
 
 @app.get("/api/v1/agents")

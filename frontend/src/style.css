@@ -47,3 +47,28 @@ main{min-width:0;flex:1;width:auto}.cards{grid-template-columns:repeat(4,minmax(
 .status.rejected{color:#f09898}
 .tool-tester-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
 @media(max-width:760px){.approval-decision-form{grid-template-columns:1fr}.tool-tester-grid{grid-template-columns:1fr}}
+
+.synth-form{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;margin-top:14px}
+.synth-form label{grid-column:1/-1;margin-bottom:-8px}
+.rubric-card{background:#0e1420;border:1px solid #2d3c50;border-radius:10px;padding:20px;display:grid;gap:14px;margin-top:18px}
+.rubric-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.rubric-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;letter-spacing:1px;text-transform:uppercase}
+.rubric-badge.PASS{background:#17382d;color:#8be2ba;border:1px solid #2d6e54}
+.rubric-badge.PASS_WITH_WARNINGS{background:#3b3217;color:#f0cb65;border:1px solid #6b5a2b}
+.rubric-badge.REVISION_REQUIRED{background:#3e2417;color:#f39765;border:1px solid #75442a}
+.rubric-badge.FAIL{background:#3d1d23;color:#f29a9a;border:1px solid #6f303a}
+.rubric-badge.INDETERMINATE{background:#232a35;color:#9fb3c6;border:1px solid #374354}
+.confidence-meter{display:flex;align-items:center;gap:12px;background:#090d16;padding:10px 14px;border-radius:8px;border:1px solid #1c2736}
+.confidence-meter b{font-size:16px;color:#8ee3e6;font-family:'Space Grotesk',sans-serif}
+.criteria-grid{display:grid;gap:8px;margin-top:8px}
+.criterion-card{background:#111824;border:1px solid #253346;border-radius:8px;padding:12px 14px;font-size:12px;display:flex;flex-direction:column;gap:6px}
+.criterion-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.criterion-evidence{color:#7f97ad;font-size:11px;background:#090e16;padding:6px 10px;border-radius:6px;border:1px solid #1a2536}
+.defects-list{display:grid;gap:8px;margin-top:8px}
+.defect-card{background:#251619;border:1px solid #572930;border-radius:8px;padding:12px 14px;font-size:12px;color:#e8b4ba;display:flex;flex-direction:column;gap:4px}
+.severity-pill{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;letter-spacing:.8px;text-transform:uppercase}
+.severity-pill.critical{background:#4a191f;color:#ff9e9e}
+.severity-pill.major{background:#4a2b19;color:#ffb885}
+.severity-pill.minor{background:#383216;color:#eed17b}
+@media(max-width:760px){.synth-form{grid-template-columns:1fr}}
+

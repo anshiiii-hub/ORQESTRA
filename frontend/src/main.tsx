@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2, Lock, AlertTriangle, Check, X} from 'lucide-react';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2, Lock, AlertTriangle, Check, X, FileText, Download} from 'lucide-react';
 import {API, ApiError, request, upload} from './api';
 import './style.css';
 
@@ -25,6 +25,10 @@ type KnowledgeSearchResult = {workspace_id: string; query: string; total_matches
 type Approval = {id: string; workspace_id: string; workflow_id: string | null; task_id: string | null; action_type: string; description: string; details: {arguments_hash?: string; sanitized_parameters?: Record<string, unknown>; parameters?: Record<string, unknown>; [key: string]: unknown}; status: 'pending' | 'approved' | 'rejected' | 'expired'; decision: 'approved' | 'rejected' | null; decision_by: string | null; reason: string | null; requested_by: string; requester_email?: string | null; decider_email?: string | null; created_at: string; expires_at: string; decided_at: string | null};
 type RegisteredTool = {tool: string; effect: 'read_only' | 'external_write' | 'isolated_compute'; requires_approval: boolean; required_permissions: string[]; description: string};
 type ToolExecutionResponse = {status: 'executed' | 'waiting_approval'; approval_id?: string; tool_call_id?: string; tool_name: string; effect: string; requires_approval?: boolean; arguments_hash?: string; message?: string; result?: unknown};
+type Artifact = {id: string; workspace_id: string; workflow_id: string | null; task_id: string | null; name: string; artifact_type: string; mime_type: string; size_bytes: number; content_sha256: string; metadata: Record<string, unknown>; created_at: string | null; download_url: string};
+type VerificationCriterion = {id: string; category: string; criterion: string; status: 'satisfied' | 'warning' | 'failed'; is_mandatory: boolean; evidence: string};
+type VerificationDefect = {criterion_id: string; severity: 'critical' | 'major' | 'minor' | 'info'; category: string; description: string; evidence_refs: string[]; repairable: boolean; suggested_task_ids: string[]};
+type VerificationReport = {id: string; workspace_id: string; workflow_id: string | null; artifact_id: string | null; decision: 'PASS' | 'PASS_WITH_WARNINGS' | 'REVISION_REQUIRED' | 'FAIL' | 'INDETERMINATE'; confidence_score: number; criteria: VerificationCriterion[]; defects: VerificationDefect[]; summary: string; created_at: string | null};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -144,6 +148,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [testToolParams, setTestToolParams] = useState('{\n  "filename": "quarterly_summary.csv",\n  "content": "region,revenue\\nAPAC,54000\\nEMEA,48000"\n}');
   const [testApprovalId, setTestApprovalId] = useState('');
   const [testToolResult, setTestToolResult] = useState<ToolExecutionResponse | null>(null);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [reportTitle, setReportTitle] = useState('Workspace Synthesized Deliverable');
+  const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -201,10 +208,13 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const toolList = await request<RegisteredTool[]>('/tools', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setTools(toolList);
+        const artifactList = await request<Artifact[]>(`/artifacts?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setArtifacts(artifactList);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]);}
+          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]);}
           fail(error);
         }
       }
@@ -307,6 +317,32 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       setTestApprovalId(result.approval_id);
     }
   });
+  const synthesizeReport = () => action(async () => {
+    if (!workspace || !canWrite) return;
+    const res = await mutate<{status: string; artifacts: Artifact[]}>('/reports/synthesize', {
+      workspace_id: workspace.id,
+      workflow_id: selected || undefined,
+      title: reportTitle,
+    });
+    if (res.artifacts.length > 0) {
+      const md = res.artifacts.find(a => a.artifact_type === 'report_markdown') || res.artifacts[0];
+      const ver = await mutate<VerificationReport>('/verification/verify', {
+        workspace_id: workspace.id,
+        workflow_id: selected || undefined,
+        artifact_id: md.id,
+      });
+      setVerificationReport(ver);
+    }
+  });
+  const runVerification = (artifactId?: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    const ver = await mutate<VerificationReport>('/verification/verify', {
+      workspace_id: workspace.id,
+      workflow_id: selected || undefined,
+      artifact_id: artifactId || undefined,
+    });
+    setVerificationReport(ver);
+  });
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
@@ -322,7 +358,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 12 · Approvals and write gating</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 13 · Synthesis, reporting, and verifiable artifacts</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -623,6 +659,148 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
             </div>
           )}
         </div>
+      </section>
+      <section className="panel lower">
+        <div className="panel-head">
+          <div>
+            <div className="eyebrow">REPORTING & VERIFIABLE ARTIFACTS / US-07, FR-G05, FR-G06</div>
+            <h2>Deliverable synthesis & 5-tier verification</h2>
+          </div>
+          <FileText size={18}/>
+        </div>
+        <p className="helper">
+          PRD Section 10.3 & 10.5: Multi-format synthesis (Markdown, styled printable HTML, JSON) aggregating execution provenance, data profiling, external research, and document evidence. All deliverables undergo automated calibrated scoring against the 5-Tier Verification Rubric (PASS, PASS_WITH_WARNINGS, REVISION_REQUIRED, FAIL, INDETERMINATE) with explicit defect attribution and mandatory limitations disclosure (FR-V05).
+        </p>
+
+        <form className="synth-form" onSubmit={e => {e.preventDefault(); synthesizeReport();}}>
+          <div>
+            <label htmlFor="report-title">Deliverable title</label>
+            <input
+              id="report-title"
+              value={reportTitle}
+              onChange={e => setReportTitle(e.target.value)}
+              placeholder="e.g. Executive Summary & Verification Report"
+              disabled={!canWrite || busy}
+            />
+          </div>
+          <button className="primary" type="submit" disabled={!canWrite || busy}>
+            <FileText size={14}/> Synthesize deliverable
+          </button>
+        </form>
+
+        <h3 style={{marginTop:24}}>Workspace artifacts ({artifacts.length})</h3>
+        {artifacts.length === 0 ? (
+          <p className="muted">No durable artifacts synthesized yet in this workspace.</p>
+        ) : (
+          <table className="document-table">
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>SHA-256 Fingerprint</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {artifacts.map(art => (
+                <tr key={art.id}>
+                  <td>
+                    <strong>{art.name}</strong>
+                    <br/>
+                    <small className="muted">{art.mime_type}</small>
+                  </td>
+                  <td><code>{art.artifact_type}</code></td>
+                  <td>{(art.size_bytes / 1024).toFixed(1)} KB</td>
+                  <td><code title={art.content_sha256}>{art.content_sha256.slice(0, 16)}…</code></td>
+                  <td>
+                    <div className="document-actions">
+                      <a
+                        className="textbutton"
+                        href={`${API}/api/v1${art.download_url}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{display:'inline-flex',alignItems:'center',gap:4,textDecoration:'none'}}
+                      >
+                        <Download size={13}/> Download
+                      </a>
+                      {canWrite && (
+                        <button
+                          className="textbutton"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => runVerification(art.id)}
+                        >
+                          Verify rubric
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {verificationReport && (
+          <div className="rubric-card">
+            <div className="rubric-header">
+              <div>
+                <span className="eyebrow">5-TIER VERIFICATION RESULT</span>
+                <h3 style={{margin:'4px 0'}}>Deliverable verification audit</h3>
+              </div>
+              <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                <span className={`rubric-badge ${verificationReport.decision}`}>
+                  {verificationReport.decision.replaceAll('_', ' ')}
+                </span>
+                <div className="confidence-meter">
+                  <small>CALIBRATED CONFIDENCE</small>
+                  <b>{(verificationReport.confidence_score * 100).toFixed(0)}%</b>
+                </div>
+              </div>
+            </div>
+
+            <p style={{margin:0,fontSize:13,color:'#cddbe8'}}>{verificationReport.summary}</p>
+
+            <div style={{marginTop:8}}>
+              <span className="eyebrow">CALIBRATED CRITERIA EVALUATION</span>
+              <div className="criteria-grid">
+                {verificationReport.criteria.map(crit => (
+                  <div className="criterion-card" key={crit.id}>
+                    <div className="criterion-top">
+                      <strong>{crit.criterion}</strong>
+                      <span className={`rubric-badge ${crit.status === 'satisfied' ? 'PASS' : crit.status === 'warning' ? 'PASS_WITH_WARNINGS' : 'FAIL'}`}>
+                        {crit.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="criterion-evidence">
+                      <b>Evidence:</b> {crit.evidence}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {verificationReport.defects.length > 0 && (
+              <div style={{marginTop:8}}>
+                <span className="eyebrow" style={{color:'#f29a9a'}}>DEFECT ATTRIBUTION ({verificationReport.defects.length})</span>
+                <div className="defects-list">
+                  {verificationReport.defects.map((def, idx) => (
+                    <div className="defect-card" key={idx}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <strong>{def.category.toUpperCase()} · {def.description}</strong>
+                        <span className={`severity-pill ${def.severity}`}>{def.severity}</span>
+                      </div>
+                      <small style={{color:'#bfa6aa'}}>
+                        {def.repairable ? 'Repairable' : 'Irreparable defect'} · Recommended tasks: {def.suggested_task_ids.length > 0 ? def.suggested_task_ids.join(', ') : 'None'}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>
