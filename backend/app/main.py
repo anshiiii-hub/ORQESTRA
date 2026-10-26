@@ -15,6 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .approvals import (
+    REGISTERED_TOOLS,
+    ApprovalDecisionRequest,
+    ApprovalError,
+    ToolExecutionRequest,
+    check_and_expire_approvals,
+    decide_approval,
+    execute_gated_tool,
+    serialize_approval,
+)
 from .auth import Identity, current_identity
 from .auth import router as auth_router
 from .data_analysis import (
@@ -44,6 +54,7 @@ from .knowledge import (
 from .llm import PlanningError, planner_settings
 from .migrate import require_current_schema
 from .models import (
+    Approval,
     CodeSandboxRun,
     DatasetAnalysis,
     DocumentChunk,
@@ -54,6 +65,7 @@ from .models import (
     ResearchSource,
     Task,
     TaskAttempt,
+    User,
     Workflow,
     now,
 )
@@ -765,6 +777,141 @@ def search_knowledge(
         "total_matches": len(results),
         "results": [r.model_dump() for r in results],
     }
+
+
+@app.get("/api/v1/tools")
+def list_registered_tools(identity: Identity = Depends(current_identity)):
+    return list(REGISTERED_TOOLS.values())
+
+
+@app.get("/api/v1/approvals")
+def list_approvals(
+    workspace_id: str = Query(min_length=1, max_length=36),
+    status: str | None = Query(default=None, max_length=24),
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    check_and_expire_approvals(db, workspace_id)
+
+    stmt = select(Approval).where(Approval.workspace_id == workspace_id)
+    if status:
+        stmt = stmt.where(Approval.status == status)
+    stmt = stmt.order_by(Approval.created_at.desc())
+    approvals = db.scalars(stmt).all()
+
+    user_ids = {a.requested_by for a in approvals} | {
+        a.decision_by for a in approvals if a.decision_by
+    }
+    users = (
+        {u.id: u.email for u in db.scalars(select(User).where(User.id.in_(user_ids))).all()}
+        if user_ids
+        else {}
+    )
+
+    return [
+        serialize_approval(
+            a,
+            decider_email=users.get(a.decision_by or ""),
+            requester_email=users.get(a.requested_by),
+        )
+        for a in approvals
+    ]
+
+
+@app.get("/api/v1/approvals/{approval_id}")
+def get_approval(
+    approval_id: str,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    approval = db.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(404, "Approval request not found")
+    require_role(db, approval.workspace_id, identity)
+
+    requester = db.get(User, approval.requested_by)
+    decider = db.get(User, approval.decision_by) if approval.decision_by else None
+    return serialize_approval(
+        approval,
+        decider_email=decider.email if decider else None,
+        requester_email=requester.email if requester else None,
+    )
+
+
+@app.post("/api/v1/approvals/{approval_id}/decision")
+def submit_approval_decision(
+    approval_id: str,
+    body: ApprovalDecisionRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    approval = db.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(404, "Approval request not found")
+    require_role(db, approval.workspace_id, identity, ("owner", "member"))
+
+    try:
+        updated = decide_approval(
+            db,
+            approval_id=approval.id,
+            decision=body.decision,
+            decider_id=identity.user.id,
+            reason=body.reason,
+        )
+    except ApprovalError as error:
+        raise HTTPException(409, str(error)) from None
+
+    requester = db.get(User, updated.requested_by)
+    decider = db.get(User, updated.decision_by) if updated.decision_by else None
+    return serialize_approval(
+        updated,
+        decider_email=decider.email if decider else None,
+        requester_email=requester.email if requester else None,
+    )
+
+
+@app.post("/api/v1/tools/execute")
+def execute_tool(
+    body: ToolExecutionRequest,
+    response: Response,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        result = execute_gated_tool(
+            db=db,
+            workspace_id=body.workspace_id,
+            user_id=identity.user.id,
+            tool_name=body.tool_name,
+            parameters=body.parameters,
+            approval_id=body.approval_id,
+            workflow_id=body.workflow_id,
+            task_id=body.task_id,
+            idempotency_key=body.idempotency_key,
+        )
+    except ApprovalError as error:
+        status_code = (
+            403
+            if error.code == "unapproved_action"
+            else 422
+            if error.code == "fingerprint_mismatch"
+            else 400
+        )
+        raise HTTPException(status_code, str(error)) from None
+
+    if result.get("status") == "waiting_approval":
+        response.status_code = 202
+    return result
 
 
 @app.get("/api/v1/agents")

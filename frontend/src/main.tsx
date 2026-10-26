@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2} from 'lucide-react';
+import {Activity, BarChart3, BrainCircuit, CheckCircle2, Clock3, Code2, Database, Layers, Play, ShieldCheck, XCircle, RefreshCw, LogOut, Users, Search, Trash2, Lock, AlertTriangle, Check, X} from 'lucide-react';
 import {API, ApiError, request, upload} from './api';
 import './style.css';
 
@@ -22,6 +22,9 @@ type KnowledgeConfiguration = {available: boolean; max_file_bytes: number; max_t
 type DocumentFileItem = {id: string; workspace_id: string; original_name: string; mime_type: string; sha256: string; size_bytes: number; status: string; chunk_count: number; created_at: string | null};
 type ChunkSearchResult = {chunk_id: string; file_id: string; filename: string; chunk_index: number; source_offset: number; score: number; content: string; metadata: {char_count?: number; word_count?: number}};
 type KnowledgeSearchResult = {workspace_id: string; query: string; total_matches: number; results: ChunkSearchResult[]};
+type Approval = {id: string; workspace_id: string; workflow_id: string | null; task_id: string | null; action_type: string; description: string; details: {arguments_hash?: string; sanitized_parameters?: Record<string, unknown>; parameters?: Record<string, unknown>; [key: string]: unknown}; status: 'pending' | 'approved' | 'rejected' | 'expired'; decision: 'approved' | 'rejected' | null; decision_by: string | null; reason: string | null; requested_by: string; requester_email?: string | null; decider_email?: string | null; created_at: string; expires_at: string; decided_at: string | null};
+type RegisteredTool = {tool: string; effect: 'read_only' | 'external_write' | 'isolated_compute'; requires_approval: boolean; required_permissions: string[]; description: string};
+type ToolExecutionResponse = {status: 'executed' | 'waiting_approval'; approval_id?: string; tool_call_id?: string; tool_name: string; effect: string; requires_approval?: boolean; arguments_hash?: string; message?: string; result?: unknown};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -134,6 +137,13 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [docUploadFile, setDocUploadFile] = useState<File | null>(null);
   const [knowledgeQuery, setKnowledgeQuery] = useState('');
   const [knowledgeResult, setKnowledgeResult] = useState<KnowledgeSearchResult | null>(null);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [tools, setTools] = useState<RegisteredTool[]>([]);
+  const [decisionReasons, setDecisionReasons] = useState<Record<string, string>>({});
+  const [testToolName, setTestToolName] = useState('file.export_csv');
+  const [testToolParams, setTestToolParams] = useState('{\n  "filename": "quarterly_summary.csv",\n  "content": "region,revenue\\nAPAC,54000\\nEMEA,48000"\n}');
+  const [testApprovalId, setTestApprovalId] = useState('');
+  const [testToolResult, setTestToolResult] = useState<ToolExecutionResponse | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -185,10 +195,16 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const fileList = await request<DocumentFileItem[]>(`/files?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
         if (controller.signal.aborted) return;
         setDocuments(fileList);
+        const approvalList = await request<Approval[]>(`/approvals?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setApprovals(approvalList);
+        const toolList = await request<RegisteredTool[]>('/tools', {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setTools(toolList);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]);}
+          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]);}
           fail(error);
         }
       }
@@ -259,6 +275,40 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     });
     setKnowledgeResult(res);
   });
+  const submitDecision = (approvalId: string, decision: 'approved' | 'rejected') => action(async () => {
+    if (!workspace || !canWrite) return;
+    const reason = decisionReasons[approvalId] || undefined;
+    await mutate(`/approvals/${approvalId}/decision`, {decision, reason});
+    setDecisionReasons(prev => {
+      const next = {...prev};
+      delete next[approvalId];
+      return next;
+    });
+  });
+  const runToolTest = () => action(async () => {
+    if (!workspace || !canWrite) return;
+    let params: Record<string, unknown> = {};
+    try {
+      params = JSON.parse(testToolParams);
+    } catch {
+      throw new Error('Tool parameters must be valid JSON');
+    }
+    const body: Record<string, unknown> = {
+      workspace_id: workspace.id,
+      tool_name: testToolName,
+      parameters: params,
+    };
+    if (testApprovalId.trim()) {
+      body.approval_id = testApprovalId.trim();
+    }
+    const result = await mutate<ToolExecutionResponse>('/tools/execute', body);
+    setTestToolResult(result);
+    if (result.status === 'waiting_approval' && result.approval_id) {
+      setTestApprovalId(result.approval_id);
+    }
+  });
+  const pendingApprovals = approvals.filter(a => a.status === 'pending');
+  const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
   return <div className="shell">
@@ -272,7 +322,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </form>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 11 · Document memory and retrieval</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 12 · Approvals and write gating</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -305,12 +355,13 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </section>
       <section className="panel results"><div className="panel-head"><div><div className="eyebrow">02 / EXECUTION</div><h2>Agent execution graph</h2></div><button className="iconbutton" aria-label="Refresh workflows" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={17}/></button></div>
         {!workflow ? <div className="empty">Submit or select a workflow to view its execution.</div> : <>
-          <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{workflow.tasks.length ? `${succeeded} / ${workflow.tasks.length} tasks completed` : 'Awaiting validated plan'}</span></div>
+          <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{workflow.tasks.length ? `${succeeded} / ${workflow.tasks.length} tasks completed` : workflow.status === 'waiting_approval' ? 'Suspended for human review' : 'Awaiting validated plan'}</span></div>
           <div className="track"><div style={{width: `${workflow.tasks.length ? succeeded / workflow.tasks.length * 100 : 0}%`}}/></div>
-          {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : 'No executable plan was accepted.'}</div> : <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · {t.routing_decision ? `${t.routing_decision.mode} score ${t.routing_decision.score.toFixed(3)}` : 'fixed route'} · {t.execution_attempts.length ? `attempt ${t.execution_attempts.length} ${t.execution_attempts[t.execution_attempts.length - 1].status}` : `${t.attempts} attempts`}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>}
+          {workflow.status === 'waiting_approval' && <div className="approval-banner"><AlertTriangle size={18}/><div><strong>Execution suspended for human review</strong><span>A sensitive external write action requires approval before this workflow can proceed. Inspect and authorize the request below.</span></div></div>}
+          {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : workflow.status === 'waiting_approval' ? 'Workflow paused awaiting human authorization.' : 'No executable plan was accepted.'}</div> : <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · {t.routing_decision ? `${t.routing_decision.mode} score ${t.routing_decision.score.toFixed(3)}` : 'fixed route'} · {t.execution_attempts.length ? `attempt ${t.execution_attempts.length} ${t.execution_attempts[t.execution_attempts.length - 1].status}` : `${t.attempts} attempts`}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>}
           {workflow.planning && <div className="planning-summary"><strong>{workflow.planning.provider === 'offline' ? 'Offline pipeline' : `OpenAI planning · ${workflow.planning.model || 'configured model'}`}</strong><span>Planning: {workflow.planning.status} · {workflow.planning.attempts.length} provider {workflow.planning.attempts.length === 1 ? 'call' : 'calls'}</span><span>{workflow.planning.accounted_tokens || 0} accounted tokens · Estimated cost ${Number(workflow.planning.accounted_cost_usd || 0).toFixed(6)}</span>{workflow.planning.attempts.some(attempt => ['reserved', 'indeterminate'].includes(attempt.status)) && <span className="helper">A reservation is retained because usage is pending or uncertain.</span>}{workflow.planning.error_code && <span className="error">{workflow.planning.error_code}</span>}</div>}
           {workflow.error && <p role="alert" className="error">{workflow.error}</p>}
-          {canWrite && ['running', 'queued', 'planning'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
+          {canWrite && ['running', 'queued', 'planning', 'waiting_approval'].includes(workflow.status) && <button className="danger" disabled={busy} onClick={() => action(async () => {await mutate(`/workflows/${workflow.id}/cancel`);})}>Cancel workflow</button>}
         </>}
       </section></div>
       <section className="panel lower"><div className="panel-head"><div><div className="eyebrow">RESTRICTED TOOLS / RESEARCH</div><h2>Search approved sources</h2></div><Activity size={18}/></div>
@@ -381,6 +432,197 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
             <pre className="output" style={{marginTop:12,maxHeight:160}}>{chunk.content}</pre>
           </article>)}
         </div>}
+      </section>
+      <section className="panel lower">
+        <div className="panel-head">
+          <div>
+            <div className="eyebrow">HUMAN-IN-THE-LOOP / WRITE GATING</div>
+            <h2>Write tool policy & approvals</h2>
+          </div>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            {pendingApprovals.length > 0 && <span className="pending-badge">{pendingApprovals.length} pending review</span>}
+            <Lock size={18}/>
+          </div>
+        </div>
+        <p className="helper">
+          PRD NFR-08: All external write tools (file export, patch application, configuration changes) require explicit human review. Tool parameters are fingerprinted using SHA-256 to guarantee tamper-resistance post-review. Approvals auto-expire in 24 hours.
+        </p>
+
+        <h3>Pending human approvals ({pendingApprovals.length})</h3>
+        {pendingApprovals.length === 0 ? (
+          <p className="muted">No write actions currently awaiting human review in this workspace.</p>
+        ) : (
+          <div className="approval-grid">
+            {pendingApprovals.map(app => (
+              <article className="approval-card pending" key={app.id}>
+                <div className="approval-card-head">
+                  <div className="approval-title">
+                    <strong>{app.action_type}</strong>
+                    <span className="effect-pill external_write">EXTERNAL WRITE</span>
+                    <span className="status waiting_approval">AWAITING DECISION</span>
+                  </div>
+                  <small style={{color:'#f0b265'}}>Expires in ~{Math.max(0, Math.round((new Date(app.expires_at).getTime() - Date.now()) / 3600000))}h</small>
+                </div>
+                <p style={{margin:'4px 0',fontSize:12,color:'#cddbe8'}}>{app.description}</p>
+                <div className="approval-meta">
+                  <div>
+                    <span>REQUESTED BY</span>
+                    <code>{app.requester_email || app.requested_by}</code>
+                  </div>
+                  <div>
+                    <span>SHA-256 FINGERPRINT</span>
+                    <code>{app.details.arguments_hash ? `${app.details.arguments_hash.slice(0, 16)}…` : '—'}</code>
+                  </div>
+                  <div>
+                    <span>APPROVAL ID</span>
+                    <code>{app.id}</code>
+                  </div>
+                </div>
+                <div>
+                  <label style={{marginTop:4,marginBottom:6}}>SANITIZED PARAMETERS (VERIFIED)</label>
+                  <pre className="output" style={{maxHeight:120}}>{JSON.stringify(app.details.sanitized_parameters || app.details.parameters || {}, null, 2)}</pre>
+                </div>
+                {canWrite ? (
+                  <form className="approval-decision-form" onSubmit={e => e.preventDefault()}>
+                    <input
+                      placeholder="Optional decision reason or audit note…"
+                      value={decisionReasons[app.id] || ''}
+                      onChange={e => setDecisionReasons(prev => ({...prev, [app.id]: e.target.value}))}
+                      disabled={busy}
+                    />
+                    <button
+                      className="approve-btn"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => submitDecision(app.id, 'approved')}
+                    >
+                      <Check size={14}/> Approve write
+                    </button>
+                    <button
+                      className="reject-btn"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => submitDecision(app.id, 'rejected')}
+                    >
+                      <X size={14}/> Reject write
+                    </button>
+                  </form>
+                ) : (
+                  <p className="helper" style={{margin:0}}>Viewer access cannot approve or reject actions. Member or owner role required.</p>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+
+        {pastApprovals.length > 0 && (
+          <details className="execution-contracts" style={{marginTop:20}}>
+            <summary>Approval decision history ({pastApprovals.length} recorded)</summary>
+            <div className="approval-grid" style={{marginTop:12}}>
+              {pastApprovals.slice(0, 10).map(app => (
+                <article className={`approval-card ${app.status}`} key={app.id}>
+                  <div className="approval-card-head">
+                    <div className="approval-title">
+                      <strong>{app.action_type}</strong>
+                      <span className={`status ${app.status}`}>{app.status.toUpperCase()}</span>
+                    </div>
+                    <small>{app.decided_at ? new Date(app.decided_at).toLocaleString() : new Date(app.created_at).toLocaleString()}</small>
+                  </div>
+                  <div className="approval-meta">
+                    <div>
+                      <span>DECISION BY</span>
+                      <code>{app.decider_email || app.decision_by || 'system (expired)'}</code>
+                    </div>
+                    <div>
+                      <span>REASON</span>
+                      <span>{app.reason || 'None specified'}</span>
+                    </div>
+                    <div>
+                      <span>FINGERPRINT</span>
+                      <code>{app.details.arguments_hash ? `${app.details.arguments_hash.slice(0, 16)}…` : '—'}</code>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </details>
+        )}
+
+        <div style={{marginTop:24,borderTop:'1px solid #233142',paddingTop:18}}>
+          <div className="eyebrow">INTERACTIVE POLICY TESTER</div>
+          <h3>Test gated tool execution</h3>
+          <p className="helper">Demonstrates write gating: running an external write without prior approval immediately halts execution with HTTP 202 Waiting Approval and creates an approval record with a SHA-256 fingerprint.</p>
+          <div className="tool-tester-grid">
+            <div>
+              <label htmlFor="test-tool-select">Registered tool</label>
+              <select
+                id="test-tool-select"
+                value={testToolName}
+                onChange={e => {
+                  setTestToolName(e.target.value);
+                  if (e.target.value === 'file.export_csv') {
+                    setTestToolParams('{\n  "filename": "quarterly_summary.csv",\n  "content": "region,revenue\\nAPAC,54000\\nEMEA,48000"\n}');
+                  } else if (e.target.value === 'code.apply_patch') {
+                    setTestToolParams('{\n  "filepath": "main.py",\n  "patch": "def run():\\n    return True\\n"\n}');
+                  } else {
+                    setTestToolParams('{\n  "query": "orchestration systems architecture"\n}');
+                  }
+                }}
+                disabled={!canWrite || busy}
+              >
+                {tools.map(t => (
+                  <option key={t.tool} value={t.tool}>
+                    {t.tool} · {t.effect.toUpperCase()} {t.requires_approval ? '(APPROVAL REQUIRED)' : '(UNRESTRICTED)'}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="test-tool-approval">Approval ID (leave blank to request new approval)</label>
+              <input
+                id="test-tool-approval"
+                placeholder="Paste approval ID to execute authorized action…"
+                value={testApprovalId}
+                onChange={e => setTestApprovalId(e.target.value)}
+                disabled={!canWrite || busy}
+              />
+            </div>
+            <div>
+              <label htmlFor="test-tool-params">Tool parameters (JSON)</label>
+              <textarea
+                id="test-tool-params"
+                className="code-input"
+                rows={6}
+                value={testToolParams}
+                onChange={e => setTestToolParams(e.target.value)}
+                disabled={!canWrite || busy}
+              />
+              <button
+                className="secondary"
+                type="button"
+                style={{marginTop:10,width:'100%'}}
+                onClick={runToolTest}
+                disabled={!canWrite || busy}
+              >
+                Execute gated tool
+              </button>
+            </div>
+          </div>
+          {testToolResult && (
+            <div style={{marginTop:16}} className={testToolResult.status === 'waiting_approval' ? 'approval-banner' : 'dataset-summary'}>
+              {testToolResult.status === 'waiting_approval' ? <AlertTriangle size={20}/> : <CheckCircle2 size={20}/>}
+              <div>
+                <strong>
+                  {testToolResult.status === 'waiting_approval'
+                    ? 'HTTP 202 WAITING_APPROVAL · Action Gated'
+                    : 'HTTP 200 EXECUTED · Action Successful'}
+                </strong>
+                <span>{testToolResult.message || 'Execution completed.'}</span>
+                {testToolResult.arguments_hash && <code>SHA-256: {testToolResult.arguments_hash}</code>}
+                {testToolResult.approval_id && <span>Created Approval ID: <code>{testToolResult.approval_id}</code></span>}
+                {testToolResult.result !== undefined && <pre className="output" style={{maxHeight:140,marginTop:8}}>{JSON.stringify(testToolResult.result, null, 2)}</pre>}
+              </div>
+            </div>
+          )}
+        </div>
       </section>
       <div className="columns lower"><section className="panel"><div className="panel-head"><div><div className="eyebrow">03 / OBSERVABILITY</div><h2>Execution event log</h2></div><Activity size={18}/></div><div className="log">{events.length === 0 ? <div className="empty small">No events yet.</div> : events.map(e => <div className="logline" key={e.id}><span>{new Date(e.created_at).toLocaleTimeString()}</span><strong>{e.kind.replaceAll('_', ' ')}</strong><code>{JSON.stringify(e.details)}</code></div>)}</div></section>
       <section className="panel"><div className="panel-head"><div><div className="eyebrow">04 / OUTPUT</div><h2>Verified result</h2></div><ShieldCheck size={18}/></div><pre className="output">{workflow?.output ? JSON.stringify(workflow.output, null, 2) : 'Output will appear after verification.'}</pre></section></div>

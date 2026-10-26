@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 11 (document memory and retrieval)
+# ORQESTRA AI — Checkpoint 12 (approvals, human-in-the-loop and write gating)
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs deterministic analysis through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 added an authenticated research gateway; Checkpoint 09 added bounded CSV/XLSX analysis; Checkpoint 10 added reviewed code proposals in isolated sandboxes; Checkpoint 11 adds workspace-scoped reference document memory, sliding-window chunk indexing with character source offsets, deterministic 128-D vector embeddings, and search retrieval. Offline planning remains the default and makes no provider calls. The full autonomous coding product remains planned.
+This prototype runs deterministic analysis through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 added an authenticated research gateway; Checkpoint 09 added bounded CSV/XLSX analysis; Checkpoint 10 added reviewed code proposals in isolated sandboxes; Checkpoint 11 added workspace reference document memory with deterministic vector embeddings; Checkpoint 12 adds 100% human-in-the-loop write gating, SHA-256 argument fingerprinting against tampering, automatic expiration, and RBAC-controlled approval state transitions. Offline planning remains the default and makes no provider calls. The full autonomous coding product remains planned.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -18,6 +18,7 @@ This prototype runs deterministic analysis through a persisted PostgreSQL task g
 - Workspace-scoped CSV/XLSX imports with schema profiling, deterministic numeric statistics, generated SVG charts, content hashes, and reproducible safe CSV exports; see [data analysis](docs/data-analysis.md).
 - Workspace-scoped code patch proposals, fixed Python checks, bounded execution artifacts, and a reviewable unified diff; see [code sandbox](docs/sandbox.md).
 - Workspace-scoped document memory, bounded chunk partitioning with exact source character offsets, deterministic 128-dimensional vector embeddings, keyword/hybrid search ranking, and deletion cascades; see [document memory](docs/document-memory.md). Retrieved text is strictly isolated to its owning workspace and treated as untrusted evidence.
+- 100% human-in-the-loop write gating for sensitive tools (`file.export_csv`, `code.apply_patch`, `workspace.config_write`), canonical JSON SHA-256 argument fingerprinting to prevent parameter tampering, 24-hour auto-expiration, sensitive parameter masking, and owner/member RBAC decision enforcement; see [write approvals and human-in-the-loop](docs/approvals.md).
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
@@ -45,13 +46,14 @@ This prototype runs deterministic analysis through a persisted PostgreSQL task g
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): 246 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration tests, contract checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
+- Validation status (26 October 2026): 252 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration tests, contract checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
 - Research fetches are disabled by default. Operators may set `RESEARCH_ENABLED=true` and a comma-separated exact host list in `RESEARCH_ALLOWED_DOMAINS`; the research endpoint is bounded to three URLs, 256 KiB per response, and six seconds per request. It accepts caller-provided URLs on approved domains; it does not crawl links or expose a general-purpose browser/search engine. Source excerpts remain untrusted and cannot grant tool permissions.
 - Dataset files are capped at 5 MiB, 5,000 rows, 100 columns, and 16,384 characters per cell. XLSX ZIP expansion and archive member counts are bounded. Formulas are read as text and escaped in CSV exports; macro-enabled formats are rejected. Uploaded source files are not retained, while normalized outputs, profiles, chart artifacts, and content hashes are stored in the owning workspace.
 - Sandbox execution is disabled by default. It requires a dedicated Docker Engine configured for the API over TLS; never point it at a production or shared daemon. Each code run uses a pinned local image, no network, no host mounts, a read-only root filesystem with bounded tmpfs, a non-root UID, dropped capabilities, no-new-privileges, 256 MiB memory, 0.5 CPU, 32 PIDs, and a 35 second wall cap. Only fixed `pytest`, `unittest`, and `compileall` checks are accepted. The Docker daemon must enforce cgroup v2 resource controls. See [sandbox setup and limitations](docs/sandbox.md).
 - Reference documents are capped at 5 MiB and 1,000,000 characters. Uploads accept text, markdown, source code, data, and text-bearing PDFs. Path traversal, null bytes, and unauthorized formats are rejected. Documents and chunks are strictly isolated to their workspace, and document deletion cascades to immediate index cleanup.
+- Sensitive external write tools require 100% human-in-the-loop review. Execution is paused into `waiting_approval` with SHA-256 parameter fingerprinting. Modifying parameters after review causes a fingerprint mismatch. Approvals expire after 24 hours. Viewers cannot approve or reject actions.
 - Passwords use salted scrypt. Session cookies are HttpOnly and SameSite=Lax; authenticated writes require a session-bound CSRF token and trusted origin. Enable secure cookies for HTTPS.
 - The UI polls REST every ~1.8 seconds. Optional SSE uses the session cookie, supports event cursors, and rechecks access during streaming.
 - Alembic manages the schema. API and worker startup require the current migration revision. Existing unversioned databases require explicit, schema-checked adoption; see [migration instructions](docs/database-migrations.md).
@@ -63,8 +65,8 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Next checkpoints
-1. Checkpoint 12: approvals, human-in-the-loop and write gating.
-2. Later checkpoints: reporter/verifier synthesis, durable checkpoint recovery, benchmarks, and deployment.
+1. Checkpoint 13: synthesis, reporting, and verifiable summary artifacts.
+2. Checkpoint 14: durable checkpoint recovery, benchmarks, and deployment.
 
 ## Repository
 ```
