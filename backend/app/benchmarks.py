@@ -1,23 +1,23 @@
-"""Standard benchmark suite runner, baseline comparison, and evaluation matrix."""
+"""Run reproducible in-process checks through the registered deterministic agents."""
 
+import json
 import time
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import (
-    BenchmarkCase,
-    BenchmarkResult,
-    BenchmarkSet,
-    Workflow,
-    now,
-)
+from .contracts import AgentRequest
+from .dispatch import dispatch
+from .models import BenchmarkCase, BenchmarkResult, BenchmarkSet
+from .planner import demo_plan
+from .registry import REGISTRY
+from .routing import select_route
 
 
 def seed_default_benchmarks(db: Session) -> BenchmarkSet:
-    """Ensure the standard orchestration benchmark set and test cases exist."""
+    """Ensure the standard fixture set exists before an explicit benchmark run."""
     benchmark_set = db.scalar(
         select(BenchmarkSet).where(BenchmarkSet.name == "Standard Orchestration Suite v1")
     )
@@ -25,16 +25,18 @@ def seed_default_benchmarks(db: Session) -> BenchmarkSet:
         benchmark_set = BenchmarkSet(
             name="Standard Orchestration Suite v1",
             version="1.0.0",
-            description="Standard B.Tech benchmark suite evaluating single-agent, fixed routing, and adaptive orchestration baselines across CSV intelligence, numerical verification, and fault-tolerant recovery.",
+            description=(
+                "Small deterministic smoke suite for the registered CSV agent pipeline. "
+                "This is not a statistical performance or security benchmark."
+            ),
         )
         db.add(benchmark_set)
         db.flush()
-
         cases = [
             BenchmarkCase(
                 set_id=benchmark_set.id,
                 case_key="csv_statistics_fixed",
-                prompt="Analyze CSV columns and compute numerical summary metrics",
+                prompt="Analyze the CSV and verify the revenue statistics",
                 input_data={
                     "csv": "product,revenue,units\nWidget,1200,10\nGadget,2500,25\nDoohickey,800,8"
                 },
@@ -45,7 +47,7 @@ def seed_default_benchmarks(db: Session) -> BenchmarkSet:
             BenchmarkCase(
                 set_id=benchmark_set.id,
                 case_key="csv_statistics_adaptive",
-                prompt="Analyze CSV columns and compute numerical summary metrics",
+                prompt="Analyze the CSV and verify the revenue statistics",
                 input_data={
                     "csv": "product,revenue,units\nWidget,1200,10\nGadget,2500,25\nDoohickey,800,8"
                 },
@@ -56,7 +58,7 @@ def seed_default_benchmarks(db: Session) -> BenchmarkSet:
             BenchmarkCase(
                 set_id=benchmark_set.id,
                 case_key="numeric_verification_fixed",
-                prompt="Verify mathematical precision and checksum consistency of inventory dataset",
+                prompt="Verify the numeric summary for the inventory dataset",
                 input_data={"csv": "item,count,cost\nBolt,100,5\nNut,200,2"},
                 expected_output_pattern="count",
                 routing_mode="fixed",
@@ -64,19 +66,17 @@ def seed_default_benchmarks(db: Session) -> BenchmarkSet:
             ),
             BenchmarkCase(
                 set_id=benchmark_set.id,
-                case_key="resilience_checkpoint_recovery",
-                prompt="Execute multi-stage workflow with checkpoint boundary validation",
-                input_data={"csv": "metric,value\nAlpha,10\nBeta,20"},
-                expected_output_pattern="value",
+                case_key="numeric_verification_adaptive",
+                prompt="Verify the numeric summary for the inventory dataset",
+                input_data={"csv": "item,count,cost\nBolt,100,5\nNut,200,2"},
+                expected_output_pattern="count",
                 routing_mode="adaptive",
                 is_active=True,
             ),
         ]
-        for case in cases:
-            db.add(case)
+        db.add_all(cases)
         db.commit()
         db.refresh(benchmark_set)
-
     return benchmark_set
 
 
@@ -86,46 +86,109 @@ def execute_benchmark_case(
     execution_id: str,
     routing_mode_override: str | None = None,
 ) -> BenchmarkResult:
-    """Execute a single benchmark case, record performance telemetry, and score the outcome."""
+    """Run the demo DAG through normal routing and dispatch, then persist measured results."""
     mode = routing_mode_override or case.routing_mode
-    start = time.perf_counter()
-
-    # Deterministic evaluation telemetry
     csv_text = case.input_data.get("csv", "")
-    lines = [line for line in csv_text.splitlines() if line.strip()]
-    row_count = max(0, len(lines) - 1)
-    has_expected_pattern = case.expected_output_pattern in csv_text
+    plan = demo_plan()
+    outputs: dict[str, dict[str, Any]] = {}
+    agents_used: list[str] = []
+    total_tokens = 0
+    total_cost = 0.0
+    workflow_id = str(uuid4())
+    started = time.perf_counter()
+    failure_code: str | None = None
 
-    # Compute execution duration and score
-    elapsed = max(0.001, time.perf_counter() - start)
-    duration_ms = int(elapsed * 1000)
-    score = 1.0 if has_expected_pattern and row_count > 0 else 0.0
-    status = "succeeded" if score >= 0.8 else "failed"
+    for task in plan.tasks:
+        required_context = {
+            alias: REGISTRY.select(
+                plan_task.capability,
+                agent_id=plan_task.agent,
+                schema_version=plan_task.schema_version,
+                agent_version=plan_task.agent_version,
+            ).capability
+            for alias, parent_name in task.input_bindings.items()
+            for plan_task in plan.tasks
+            if plan_task.id == parent_name
+        }
+        selected, _decision = select_route(
+            mode=mode,
+            requested_agent=task.agent,
+            capability=task.capability,
+            schema_version=task.schema_version,
+            agent_version=task.agent_version,
+            required_context=required_context,
+            registry=REGISTRY,
+            histories={},
+            # The suite invokes agents in-process; this represents its one local runner.
+            worker_counts={agent.agent_id: 1 for agent in REGISTRY.all()},
+        )
+        context = {
+            alias: outputs[parent]
+            for alias, parent in task.input_bindings.items()
+            if parent in outputs
+        }
+        if len(context) != len(task.input_bindings):
+            failure_code = "benchmark_dependency_missing"
+            break
+        request = AgentRequest.model_validate(
+            {
+                "schema_version": task.schema_version,
+                "request_id": str(uuid4()),
+                "workflow_id": workflow_id,
+                "task_id": task.id,
+                "agent_type": selected.agent_id,
+                "agent_version": selected.version,
+                "capability": task.capability,
+                "objective": case.prompt,
+                "context_refs": {alias: parent for alias, parent in task.input_bindings.items()},
+                "payload": {"csv_text": csv_text, "context": context},
+                "tool_permissions": [],
+            }
+        )
+        agent_result = dispatch(request)
+        if agent_result.status != "succeeded" or agent_result.structured_output is None:
+            failure_code = (
+                agent_result.error.code if agent_result.error else "benchmark_agent_failed"
+            )
+            break
+        outputs[task.id] = agent_result.structured_output
+        agents_used.append(selected.agent_id)
+        total_tokens += (agent_result.usage.input_tokens or 0) + (
+            agent_result.usage.output_tokens or 0
+        )
+        total_cost += agent_result.usage.cost_usd or 0.0
 
-    # Tokens and cost metrics based on routing mode
-    tokens_used = 150 if mode == "adaptive" else 90
-    cost_usd = 0.0003 if mode == "adaptive" else 0.0001
+    elapsed_ms = max(1, round((time.perf_counter() - started) * 1000))
+    final_output = outputs.get(plan.tasks[-1].id, {})
+    pattern_matched = (
+        case.expected_output_pattern.casefold()
+        in json.dumps(final_output, sort_keys=True).casefold()
+    )
+    score = 1.0 if failure_code is None and pattern_matched else 0.0
+    status = "succeeded" if score == 1.0 else "failed"
 
-    result = BenchmarkResult(
+    benchmark_result = BenchmarkResult(
         benchmark_case_id=case.id,
         execution_id=execution_id,
         routing_mode=mode,
         status=status,
-        duration_ms=duration_ms,
-        tokens_used=tokens_used,
-        cost_usd=cost_usd,
+        duration_ms=elapsed_ms,
+        tokens_used=total_tokens,
+        cost_usd=total_cost,
         score=score,
         benchmark_metadata={
             "case_key": case.case_key,
-            "rows_evaluated": row_count,
-            "pattern_matched": has_expected_pattern,
-            "timestamp": now().isoformat(),
+            "tasks_executed": len(agents_used),
+            "agents_used": agents_used,
+            "expected_output_matched": pattern_matched,
+            "failure_code": failure_code,
+            "execution_kind": "in_process_deterministic_dispatch",
         },
     )
-    db.add(result)
+    db.add(benchmark_result)
     db.commit()
-    db.refresh(result)
-    return result
+    db.refresh(benchmark_result)
+    return benchmark_result
 
 
 def execute_benchmark_suite(
@@ -133,51 +196,26 @@ def execute_benchmark_suite(
     set_id: str | None = None,
     routing_mode_override: str | None = None,
 ) -> list[BenchmarkResult]:
-    """Execute all active cases in the benchmark suite and return recorded results."""
-    seed_default_benchmarks(db)
-
-    if set_id is None:
-        bset = db.scalar(
-            select(BenchmarkSet).where(BenchmarkSet.name == "Standard Orchestration Suite v1")
-        )
-        if bset is None:
-            return []
-        target_set_id = bset.id
-    else:
-        target_set_id = set_id
-
+    """Execute all active cases in the standard set and persist their results."""
+    benchmark_set = seed_default_benchmarks(db)
+    target_set_id = set_id or benchmark_set.id
     cases = list(
         db.scalars(
             select(BenchmarkCase)
             .where(BenchmarkCase.set_id == target_set_id, BenchmarkCase.is_active.is_(True))
-            .order_by(BenchmarkCase.created_at.asc())
+            .order_by(BenchmarkCase.created_at.asc(), BenchmarkCase.case_key.asc())
         ).all()
     )
-
     execution_id = str(uuid4())
-    results: list[BenchmarkResult] = []
-    for case in cases:
-        res = execute_benchmark_case(
-            db, case, execution_id=execution_id, routing_mode_override=routing_mode_override
-        )
-        results.append(res)
-
-    return results
+    return [execute_benchmark_case(db, case, execution_id, routing_mode_override) for case in cases]
 
 
 def get_benchmark_summary(db: Session) -> dict[str, Any]:
-    """Aggregate benchmark results comparing Fixed vs Adaptive baselines and recovery metrics."""
-    seed_default_benchmarks(db)
-
+    """Aggregate recorded runs without creating data or implying unmeasured speedups."""
     results = list(db.scalars(select(BenchmarkResult)).all())
-
-    # If no results recorded yet, execute the suite once to establish baselines
-    if not results:
-        results = execute_benchmark_suite(db)
-
     by_mode: dict[str, list[BenchmarkResult]] = {"fixed": [], "adaptive": []}
-    for r in results:
-        by_mode.setdefault(r.routing_mode, []).append(r)
+    for result in results:
+        by_mode.setdefault(result.routing_mode, []).append(result)
 
     def stats_for(items: list[BenchmarkResult]) -> dict[str, Any]:
         if not items:
@@ -189,62 +227,28 @@ def get_benchmark_summary(db: Session) -> dict[str, Any]:
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
             }
-        succeeded = [i for i in items if i.status == "succeeded"]
+        succeeded = [item for item in items if item.status == "succeeded"]
         return {
             "runs": len(items),
             "success_rate": round(len(succeeded) / len(items), 3),
-            "mean_duration_ms": round(sum(i.duration_ms for i in items) / len(items), 1),
-            "mean_score": round(sum(i.score for i in items) / len(items), 3),
-            "total_tokens": sum(i.tokens_used for i in items),
-            "total_cost_usd": round(sum(i.cost_usd for i in items), 4),
+            "mean_duration_ms": round(sum(item.duration_ms for item in items) / len(items), 1),
+            "mean_score": round(sum(item.score for item in items) / len(items), 3),
+            "total_tokens": sum(item.tokens_used for item in items),
+            "total_cost_usd": round(sum(item.cost_usd for item in items), 6),
         }
-
-    # Recovery metrics from workflows in the database
-    total_workflows = db.scalar(select(func.count(Workflow.id))) or 0
-    resumed_workflows = (
-        db.scalar(
-            select(func.count(Workflow.id)).where(
-                Workflow.recovery_metadata.is_not(None),
-                Workflow.recovery_metadata["resumed_from_checkpoint"].as_boolean().is_(True),
-            )
-        )
-        or 0
-    )
-    paused_workflows = (
-        db.scalar(select(func.count(Workflow.id)).where(Workflow.status == "paused")) or 0
-    )
-
-    eligible_recovery = resumed_workflows + paused_workflows
-    recovery_fraction = (
-        round(resumed_workflows / eligible_recovery, 3) if eligible_recovery > 0 else 1.0
-    )
-
-    fixed_stats = stats_for(by_mode.get("fixed", []))
-    adaptive_stats = stats_for(by_mode.get("adaptive", []))
-
-    # Parallel speedup / trade-off computation per PRD Section 15
-    speedup = (
-        round(fixed_stats["mean_duration_ms"] / max(0.1, adaptive_stats["mean_duration_ms"]), 2)
-        if fixed_stats["mean_duration_ms"] > 0 and adaptive_stats["mean_duration_ms"] > 0
-        else 1.0
-    )
 
     return {
         "suite_name": "Standard Orchestration Suite v1",
-        "total_executions": len(results),
+        "total_executions": len({result.execution_id for result in results}),
         "baselines": {
-            "fixed": fixed_stats,
-            "adaptive": adaptive_stats,
+            "fixed": stats_for(by_mode.get("fixed", [])),
+            "adaptive": stats_for(by_mode.get("adaptive", [])),
         },
-        "recovery_metrics": {
-            "total_workflows": total_workflows,
-            "resumed_from_checkpoint": resumed_workflows,
-            "currently_paused": paused_workflows,
-            "recovery_rate": recovery_fraction,
-        },
-        "parallel_speedup": speedup,
+        "parallel_speedup": None,
         "evaluation_notes": (
-            "Adaptive routing dynamically balances agent capability scores, achieving deterministic "
-            "task allocation while preserving full checkpoint reproducibility."
+            "Runs the registered deterministic CSV agent DAG in-process. The built-in registry "
+            "has one agent per capability, so fixed and adaptive choose the same agents. "
+            "Latency is local sequential dispatch time; parallel speedup and provider cost are "
+            "not measured by this smoke suite."
         ),
     }

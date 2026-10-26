@@ -30,8 +30,9 @@ type VerificationCriterion = {id: string; category: string; criterion: string; s
 type VerificationDefect = {criterion_id: string; severity: 'critical' | 'major' | 'minor' | 'info'; category: string; description: string; evidence_refs: string[]; repairable: boolean; suggested_task_ids: string[]};
 type VerificationReport = {id: string; workspace_id: string; workflow_id: string | null; artifact_id: string | null; decision: 'PASS' | 'PASS_WITH_WARNINGS' | 'REVISION_REQUIRED' | 'FAIL' | 'INDETERMINATE'; confidence_score: number; criteria: VerificationCriterion[]; defects: VerificationDefect[]; summary: string; created_at: string | null};
 type BenchmarkStats = {runs: number; success_rate: number; mean_duration_ms: number; mean_score: number; total_tokens: number; total_cost_usd: number};
-type BenchmarkSummary = {suite_name: string; total_executions: number; baselines: {fixed: BenchmarkStats; adaptive: BenchmarkStats}; recovery_metrics: {total_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number}; parallel_speedup: number; evaluation_notes: string};
+type BenchmarkSummary = {suite_name: string; total_executions: number; baselines: {fixed: BenchmarkStats; adaptive: BenchmarkStats}; parallel_speedup: number | null; evaluation_notes: string};
 type SystemReadiness = {status: string; database: string; schema_revision: string; active_workers: number; timestamp: string};
+type WorkspaceMetrics = {total_workflows: number; recovery_metrics: {eligible_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number | null}};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null; recovery_metadata?: Record<string, unknown> | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
@@ -156,6 +157,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [benchmarkSummary, setBenchmarkSummary] = useState<BenchmarkSummary | null>(null);
   const [systemReadiness, setSystemReadiness] = useState<SystemReadiness | null>(null);
+  const [workspaceMetrics, setWorkspaceMetrics] = useState<WorkspaceMetrics | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
   const [routingMode, setRoutingMode] = useState<'fixed' | 'adaptive'>('fixed');
   const [planningCostLimit, setPlanningCostLimit] = useState('0.05');
@@ -222,10 +224,13 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const bench = await request<BenchmarkSummary>('/benchmarks/summary', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setBenchmarkSummary(bench);
+        const metrics = await request<WorkspaceMetrics>(`/metrics/overview?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
+        if (controller.signal.aborted) return;
+        setWorkspaceMetrics(metrics);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]); setBenchmarkSummary(null); setSystemReadiness(null);}
+          if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]); setBenchmarkSummary(null); setSystemReadiness(null); setWorkspaceMetrics(null);}
           fail(error);
         }
       }
@@ -388,7 +393,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       <div className="readiness-pill"><span className="status-dot green"/> System Ready · Schema 0013 · {systemReadiness?.active_workers ?? 1} worker(s)</div>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
       <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
-      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Checkpoint 14 · Durable checkpoint recovery, benchmarks, and deployment</small></div>
+      <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Recovery controls · evaluation smoke suite</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
@@ -862,7 +867,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           <BarChart3 size={18}/>
         </div>
         <p className="helper">
-          PRD Section 14 & 15: Standardized scientific evaluation measuring task success rate, parallel speedup, and checkpoint recovery rate across Fixed Routing vs. Adaptive Multi-Agent Orchestration. Telemetry and score bounds are calibrated deterministically.
+          Runs the registered deterministic agents under fixed and adaptive routing. This small in-process suite checks task outputs; it is not a parallel or statistical performance benchmark.
         </p>
 
         <div className="benchmark-actions">
@@ -899,19 +904,19 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           <>
             <div className="bench-metrics-grid">
               <div className="bench-metric-card">
-                <span>PARALLEL SPEEDUP RATIO</span>
-                <b>{benchmarkSummary.parallel_speedup.toFixed(2)}x</b>
-                <small className="muted">Mean seq. elapsed / mean adaptive elapsed</small>
+                <span>PARALLEL SPEEDUP</span>
+                <b>{benchmarkSummary.parallel_speedup === null ? 'N/A' : `${benchmarkSummary.parallel_speedup.toFixed(2)}x`}</b>
+                <small className="muted">Not measured by this sequential smoke suite</small>
               </div>
               <div className="bench-metric-card">
                 <span>CHECKPOINT RECOVERY RATE</span>
-                <b>{(benchmarkSummary.recovery_metrics.recovery_rate * 100).toFixed(1)}%</b>
-                <small className="muted">{benchmarkSummary.recovery_metrics.resumed_from_checkpoint} of {benchmarkSummary.recovery_metrics.resumed_from_checkpoint + benchmarkSummary.recovery_metrics.currently_paused} paused runs resumed</small>
+                <b>{workspaceMetrics?.recovery_metrics.recovery_rate === null || !workspaceMetrics ? 'N/A' : `${(workspaceMetrics.recovery_metrics.recovery_rate * 100).toFixed(1)}%`}</b>
+                <small className="muted">{workspaceMetrics ? `${workspaceMetrics.recovery_metrics.resumed_from_checkpoint} of ${workspaceMetrics.recovery_metrics.eligible_workflows} paused workflows resumed in this workspace` : 'Workspace recovery data unavailable'}</small>
               </div>
               <div className="bench-metric-card">
                 <span>TOTAL EXECUTIONS</span>
                 <b>{benchmarkSummary.total_executions}</b>
-                <small className="muted">Standard Orchestration Suite v1</small>
+                <small className="muted">In-process deterministic agent checks</small>
               </div>
             </div>
 
@@ -922,9 +927,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
                   <th>Variant</th>
                   <th>Runs</th>
                   <th>Success Rate</th>
-                  <th>Mean Latency</th>
+                  <th>Mean Dispatch Time</th>
                   <th>Mean Score</th>
-                  <th>Total Cost (USD)</th>
+                  <th>Provider Cost (USD)</th>
                 </tr>
               </thead>
               <tbody>

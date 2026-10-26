@@ -1,7 +1,7 @@
-# ORQESTRA AI — Checkpoint 14 (durable checkpoint recovery, benchmarks, and deployment)
+# ORQESTRA AI — implementation status
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs deterministic analysis through a persisted PostgreSQL task graph. Checkpoint 05 added optional OpenAI planning; Checkpoint 06 added durable leased scheduling; Checkpoint 07 added fixed/adaptive routing; Checkpoint 08 added an authenticated research gateway; Checkpoint 09 added bounded CSV/XLSX analysis; Checkpoint 10 added reviewed code proposals in isolated sandboxes; Checkpoint 11 added workspace reference document memory with deterministic vector embeddings; Checkpoint 12 added 100% human-in-the-loop write gating and SHA-256 argument fingerprinting; Checkpoint 13 added durable multi-format deliverable synthesis and 5-Tier Verification Rubrics; Checkpoint 14 adds durable checkpoint recovery (resuming interrupted runs from task boundaries without re-running pure completed tasks), workflow pause/resume/retry state transitions, standard benchmark suite execution (Fixed vs. Adaptive orchestration), parallel speedup and recovery rate metrics, deep operational health checks (`/healthz` and `/readyz`), and workspace telemetry. Offline planning remains the default and makes no provider calls. The full autonomous coding product remains planned.
+This prototype runs deterministic analysis through a persisted PostgreSQL task graph. It includes optional OpenAI planning, leased task scheduling, fixed/adaptive routing, authenticated research, bounded CSV/XLSX analysis, reviewed code proposals in isolated sandboxes, workspace-scoped document memory, human-in-the-loop write approvals, deliverable synthesis, verification, recovery controls, and a small in-process benchmark smoke suite. Offline planning remains the default and makes no provider calls. The full autonomous coding product remains planned.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -20,7 +20,7 @@ This prototype runs deterministic analysis through a persisted PostgreSQL task g
 - Workspace-scoped document memory, bounded chunk partitioning with exact source character offsets, deterministic 128-dimensional vector embeddings, keyword/hybrid search ranking, and deletion cascades; see [document memory](docs/document-memory.md). Retrieved text is strictly isolated to its owning workspace and treated as untrusted evidence.
 - 100% human-in-the-loop write gating for sensitive tools (`file.export_csv`, `code.apply_patch`, `workspace.config_write`), canonical JSON SHA-256 argument fingerprinting to prevent parameter tampering, 24-hour auto-expiration, sensitive parameter masking, and owner/member RBAC decision enforcement; see [write approvals and human-in-the-loop](docs/approvals.md).
 - Multi-format deliverable synthesis (Markdown, styled printable HTML, structured JSON), durable SHA-256 fingerprinted artifact storage, secure attachment downloads, and calibrated 5-tier verification rubric (`PASS`, `PASS_WITH_WARNINGS`, `REVISION_REQUIRED`, `FAIL`, `INDETERMINATE`) with defect attribution and mandatory limitations disclosure; see [synthesis and verification](docs/reporting-verification.md).
-- Durable checkpoint boundary preservation, workflow pause/resume/retry state transitions, standard benchmark suite execution (Fixed vs. Adaptive orchestration), parallel speedup and recovery rate metrics, deep operational readiness probes (`/healthz` and `/readyz`), and workspace telemetry; see [benchmarks and recovery](docs/benchmarks-recovery.md).
+- Workflow pause/resume/retry controls, a deterministic in-process dispatch smoke suite, database/schema readiness checks, and workspace telemetry; see [benchmarks and recovery](docs/benchmarks-recovery.md). The smoke suite does not measure parallel speedup or establish statistical performance claims.
 - Explicit protocol 1.0 / implementation 1.0.0 contracts, JSON Schemas, typed input/output validation, and sanitized failure codes.
 - Capability and input-binding checks before dispatch; invalid results stop the workflow and skip pending tasks.
 - Agent registry, compatible-worker availability, and execution request IDs in the dashboard; see [agent contracts](docs/agent-contracts.md).
@@ -48,7 +48,7 @@ This prototype runs deterministic analysis through a persisted PostgreSQL task g
 The API uses a session cookie and an in-memory CSRF token. Shared API keys no longer grant access. Follow the [authentication API sequence](docs/authentication.md#api-sequence) for login, workspace creation, workflow submission, and event replay. Interactive API documentation: `http://localhost:8001/docs` by default (override with `API_PORT`).
 
 ## Security and deployment boundaries
-- Validation status (26 October 2026): 264 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and covered by CI. Ruff, Mypy, migration tests, contract checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
+- Validation status (26 October 2026): 266 local tests pass; two PostgreSQL-only lease/concurrency tests are skipped locally and included in the PostgreSQL CI job. Ruff, Mypy, migration tests, contract checks, and the frontend production build pass. Live-model quality remains unmeasured; no paid API calls were made.
 
 - **Do not expose this prototype publicly or deploy it to production.** Email verification, password reset, login rate limiting, and production TLS hardening remain future work. See [authentication scope and limitations](docs/authentication.md#scope-and-remaining-hardening).
 - Research fetches are disabled by default. Operators may set `RESEARCH_ENABLED=true` and a comma-separated exact host list in `RESEARCH_ALLOWED_DOMAINS`; the research endpoint is bounded to three URLs, 256 KiB per response, and six seconds per request. It accepts caller-provided URLs on approved domains; it does not crawl links or expose a general-purpose browser/search engine. Source excerpts remain untrusted and cannot grant tool permissions.
@@ -68,8 +68,8 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Workflow reads, outputs, cancellations, and events are workspace-scoped. Legacy workflows remain hidden until explicitly assigned by a local operator. Retention and document/artifact authorization will be added with those features.
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
-## Milestone completion
-All 14 checkpoints specified in the 29-page B.Tech PRD and Engineering Architecture are fully implemented, tested, verified, and documented end-to-end.
+## Checkpoint status
+Repository feature numbers do not match the project handbook's 16-checkpoint plan. Recovery controls do not yet provide the handbook's LangGraph PostgreSQL checkpointer or live worker-kill/restart evidence. The handbook's dashboard/observability checkpoint, 50–100 case benchmark and security review, and cloud deployment/final submission gates are not complete. See [checkpoint alignment and current limitations](docs/benchmarks-recovery.md).
 
 ## Repository
 ```

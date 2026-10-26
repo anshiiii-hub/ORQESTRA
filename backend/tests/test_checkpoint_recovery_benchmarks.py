@@ -2,7 +2,7 @@
 
 from sqlalchemy import select
 
-from app.models import Event, Task, Workflow
+from app.models import BenchmarkSet, Event, Task, TaskAttempt, Workflow
 from app.worker import tick
 
 
@@ -21,6 +21,19 @@ def test_healthz_and_readyz_probes(api_client, accounts):
     assert ready_data["status"] == "ready"
     assert ready_data["database"] == "connected"
     assert ready_data["schema_revision"] == "0013"
+
+
+def test_readyz_rejects_outdated_database_schema(api_client, accounts, migrated_database):
+    from sqlalchemy import text
+
+    _, sessions, _ = migrated_database
+    with sessions() as db:
+        db.execute(text("UPDATE alembic_version SET version_num = '0012'"))
+        db.commit()
+
+    response = api_client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database schema is not current"
 
 
 def test_workflow_pause_and_resume_state_machine(api_client, accounts, migrated_database):
@@ -203,8 +216,70 @@ def test_demo_d_fault_tolerance_resilience_simulation(api_client, accounts, migr
         assert tasks[0].result == first_task_result
 
 
-def test_benchmark_suite_execution_and_summary(api_client, accounts):
+def test_pause_during_dispatch_requeues_inflight_task(
+    api_client, accounts, migrated_database, monkeypatch
+):
+    from app import worker as worker_module
+    from app.recovery import pause_workflow
+
+    _, sessions, _ = migrated_database
+    owner = accounts("pause-race@example.com")
+    workspace_id = owner.post("/api/v1/workspaces", json={"name": "Pause race"}).json()["id"]
+    workflow_id = owner.post(
+        "/api/v1/workflows",
+        json={
+            "workspace_id": workspace_id,
+            "prompt": "Check pause during a running task",
+            "csv_text": "item,value\nA,1\nB,2",
+            "planner_mode": "offline",
+        },
+    ).json()["workflow_id"]
+    original_dispatch = worker_module.dispatch
+
+    def pause_before_dispatch_result(request, *args, **kwargs):
+        with sessions() as db:
+            pause_workflow(db, request.workflow_id)
+        return original_dispatch(request, *args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "dispatch", pause_before_dispatch_result)
+    assert worker_module.tick() is True
+
+    with sessions() as db:
+        workflow = db.get(Workflow, workflow_id)
+        tasks = list(
+            db.scalars(select(Task).where(Task.workflow_id == workflow_id).order_by(Task.ordinal))
+        )
+        attempts = list(
+            db.scalars(select(TaskAttempt).where(TaskAttempt.workflow_id == workflow_id)).all()
+        )
+        assert workflow is not None and workflow.status == "paused"
+        assert tasks[0].status == "pending"
+        assert attempts[0].status == "superseded"
+
+    assert owner.post(f"/api/v1/workflows/{workflow_id}/retry").status_code == 400
+    assert owner.post(f"/api/v1/workflows/{workflow_id}/resume").status_code == 200
+    monkeypatch.setattr(worker_module, "dispatch", original_dispatch)
+    for _ in range(10):
+        if not worker_module.tick():
+            break
+    with sessions() as db:
+        workflow = db.get(Workflow, workflow_id)
+        tasks = list(
+            db.scalars(select(Task).where(Task.workflow_id == workflow_id).order_by(Task.ordinal))
+        )
+        assert workflow is not None and workflow.status == "succeeded"
+        assert all(task.status == "succeeded" for task in tasks)
+
+
+def test_benchmark_suite_execution_and_summary(api_client, accounts, migrated_database):
+    _, sessions, _ = migrated_database
     owner = accounts("bench-runner@example.com")
+
+    # Reading the matrix must not seed data or execute benchmark cases.
+    empty_summary = owner.get("/api/v1/benchmarks/summary").json()
+    assert empty_summary["total_executions"] == 0
+    with sessions() as db:
+        assert db.query(BenchmarkSet).count() == 0
 
     # 1. Execute benchmark suite with fixed routing
     exec_resp = owner.post(
@@ -217,6 +292,11 @@ def test_benchmark_suite_execution_and_summary(api_client, accounts):
     assert data["count"] >= 4
     results = data["results"]
     assert all(r["routing_mode"] == "fixed" for r in results)
+    assert all(r["duration_ms"] > 0 for r in results)
+    assert all(r["metadata"]["tasks_executed"] == 3 for r in results)
+    assert all(
+        r["metadata"]["execution_kind"] == "in_process_deterministic_dispatch" for r in results
+    )
     exec_id = results[0]["execution_id"]
 
     # 2. Get specific execution results
@@ -242,8 +322,9 @@ def test_benchmark_suite_execution_and_summary(api_client, accounts):
     assert "adaptive" in summary["baselines"]
     assert summary["baselines"]["fixed"]["runs"] >= 4
     assert summary["baselines"]["adaptive"]["runs"] >= 4
-    assert "recovery_metrics" in summary
-    assert summary["parallel_speedup"] >= 0.0
+    assert summary["total_executions"] == 2
+    assert summary["parallel_speedup"] is None
+    assert "recovery_metrics" not in summary
 
 
 def test_metrics_overview_endpoint(api_client, accounts):
@@ -275,6 +356,8 @@ def test_metrics_overview_endpoint(api_client, accounts):
     assert "status_counts" in metrics
     assert "recovery_metrics" in metrics
     assert metrics["recovery_metrics"]["resumed_from_checkpoint"] >= 1
+    assert metrics["recovery_metrics"]["eligible_workflows"] == 1
+    assert metrics["recovery_metrics"]["recovery_rate"] == 1.0
 
 
 def test_recovery_workspace_isolation_and_rbac(api_client, accounts):

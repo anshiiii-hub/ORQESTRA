@@ -7,6 +7,8 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Literal
 
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,7 +55,7 @@ from .knowledge import (
     validate_upload_filename as validate_knowledge_filename,
 )
 from .llm import PlanningError, planner_settings
-from .migrate import require_current_schema
+from .migrate import migration_config, require_current_schema
 from .models import (
     Approval,
     Artifact,
@@ -274,8 +276,13 @@ def health():
 def readyz(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
-    except Exception as err:
-        raise HTTPException(503, f"Database connectivity check failed: {err}") from None
+        current_heads = MigrationContext.configure(db.connection()).get_current_heads()
+        expected_heads = ScriptDirectory.from_config(migration_config()).get_heads()
+    except Exception:
+        raise HTTPException(503, "Database readiness check failed") from None
+
+    if set(current_heads) != set(expected_heads):
+        raise HTTPException(503, "Database schema is not current")
 
     active_threshold = now() - timedelta(seconds=60)
     active_workers = (
@@ -289,7 +296,7 @@ def readyz(db: Session = Depends(get_db)):
     return {
         "status": "ready",
         "database": "connected",
-        "schema_revision": "0013",
+        "schema_revision": ",".join(sorted(current_heads)),
         "active_workers": active_workers,
         "timestamp": now().isoformat(),
     }
@@ -1415,19 +1422,17 @@ def metrics_overview(
         )
         or 0
     )
-    resumed_count = (
-        db.scalar(
-            select(func.count(Workflow.id)).where(
-                Workflow.workspace_id == workspace_id,
-                Workflow.recovery_metadata.is_not(None),
-                Workflow.recovery_metadata["resumed_from_checkpoint"].as_boolean().is_(True),
-            )
+    recovery_rows = db.execute(
+        select(Workflow.status, Workflow.recovery_metadata).where(
+            Workflow.workspace_id == workspace_id
         )
-        or 0
-    )
+    ).all()
+    eligible_recovery = [
+        metadata for _, metadata in recovery_rows if metadata and metadata.get("pause_history")
+    ]
+    resumed_count = sum(bool(metadata.get("resume_history")) for metadata in eligible_recovery)
     paused_count = status_counts.get("paused", 0)
-    eligible = resumed_count + paused_count
-    recovery_rate = round(resumed_count / eligible, 3) if eligible > 0 else 1.0
+    recovery_rate = round(resumed_count / len(eligible_recovery), 3) if eligible_recovery else None
 
     return {
         "workspace_id": workspace_id,
@@ -1435,6 +1440,7 @@ def metrics_overview(
         "status_counts": status_counts,
         "active_workers": active_workers,
         "recovery_metrics": {
+            "eligible_workflows": len(eligible_recovery),
             "resumed_from_checkpoint": resumed_count,
             "currently_paused": paused_count,
             "recovery_rate": recovery_rate,

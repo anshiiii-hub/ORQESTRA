@@ -297,7 +297,21 @@ def tick(worker_id: str = WORKER_ID) -> bool:
             and task.current_attempt_id == completed_attempt.id
         )
         active = workflow.status in ("queued", "running")
-        if not owns_attempt or not active:
+        if workflow.status == "paused" and task.current_attempt_id == completed_attempt.id:
+            completed_attempt.status = "superseded"
+            completed_attempt.finished_at = now()
+            completed_attempt.error_code = "workflow_paused"
+            task.status = "pending"
+            task.current_attempt_id = task.lease_owner = None
+            task.lease_expires_at = None
+            db.add(
+                Event(
+                    workflow_id=wid,
+                    kind="task_requeued_after_pause",
+                    details={"task": task.name},
+                )
+            )
+        elif not owns_attempt or not active:
             if completed_attempt.status == "running":
                 completed_attempt.status = "cancelled" if not active else "superseded"
                 completed_attempt.finished_at = now()

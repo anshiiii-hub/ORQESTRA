@@ -88,19 +88,8 @@ def resume_workflow(db: Session, workflow_id: str, user_id: str | None = None) -
             f"Cannot resume workflow in status '{workflow.status}'. Only paused workflows can be resumed."
         )
 
-    tasks = list(
-        db.scalars(
-            select(Task).where(Task.workflow_id == workflow.id).order_by(Task.ordinal.asc())
-        ).all()
-    )
-
-    # Completed tasks remain succeeded and are never re-run.
-    # Any tasks left running or uncompleted when paused are reset to pending if ready.
-    for task in tasks:
-        if task.status == "running":
-            task.status = "pending"
-            task.lease_owner = None
-            task.lease_expires_at = None
+    # Keep active leases intact. An in-flight worker may still commit safely; if it
+    # died while paused, the normal lease-expiry recovery path will requeue its task.
 
     recovery_meta = dict(workflow.recovery_metadata or {})
     resume_history = list(recovery_meta.get("resume_history", []))
@@ -144,6 +133,10 @@ def retry_workflow(
 
     if workflow.status in ("queued", "running"):
         raise RecoveryError("Cannot retry an in-flight workflow. Cancel or wait for completion.")
+    if workflow.status not in ("failed", "cancelled"):
+        raise RecoveryError(
+            f"Cannot retry workflow in status '{workflow.status}'. Only failed or cancelled workflows can be retried."
+        )
 
     tasks = list(
         db.scalars(
