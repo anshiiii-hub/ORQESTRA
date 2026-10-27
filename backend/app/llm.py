@@ -1,3 +1,4 @@
+
 """Optional OpenAI JSON planner transport. No SDK retries or configurable remote URLs."""
 
 import json
@@ -52,10 +53,10 @@ def planner_settings() -> PlannerSettings:
     if os.getenv("LLM_PLANNER_ENABLED", "false").lower() != "true":
         return PlannerSettings()
     try:
-        model = os.environ["LLM_MODEL"].strip()
-        key = os.environ["OPENAI_API_KEY"].strip()
-        input_price = Decimal(os.environ["LLM_INPUT_PRICE_PER_MILLION"])
-        output_price = Decimal(os.environ["LLM_OUTPUT_PRICE_PER_MILLION"])
+        model = os.getenv("LLM_MODEL", "").strip()
+        key = os.getenv("OPENAI_API_KEY", "").strip()
+        input_price = Decimal(os.getenv("LLM_INPUT_PRICE_PER_MILLION", ""))
+        output_price = Decimal(os.getenv("LLM_OUTPUT_PRICE_PER_MILLION", ""))
         output_tokens = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2048"))
         if (
             not model
