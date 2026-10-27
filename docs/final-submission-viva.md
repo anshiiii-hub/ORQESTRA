@@ -11,7 +11,7 @@
 | 3:00–3:45 | 5 | Describe workspace authorization, approval fingerprints, untrusted retrieved text and optional sandbox isolation. |
 | 3:45–5:00 | 6–7 | Explain the frozen 78-case fixture design and what its results can and cannot support. |
 | 5:00–6:00 | 8 | Run Demo A, B and C. Label A/B as fixtures and C as the real bounded analyzer. Mention D is a state simulation. |
-| 6:00–7:00 | 9–10 | Show the staging architecture and backup/restore flow. State that a live host acceptance has not yet been run. |
+| 6:00–7:00 | 9–10 | Show the staging architecture and the locally verified encrypted backup/isolated restore flow. State that public host acceptance and off-host retention have not yet been run. |
 | 7:00–8:00 | 11–12 | Separate passed local checks from open gates; close with trade-offs and invite questions. |
 
 ## Live demo sequence
@@ -49,7 +49,7 @@ Retrieved text is marked untrusted and does not grant tool permissions. The prom
 
 **What is the status of deployment?**
 
-The repository contains a staging Compose overlay, TLS proxy, secret-file injection, bootstrap procedure, and encrypted backup/isolated restore scripts. Fresh VPS deployment and live restore acceptance need a configured host, domain, DNS and operator-controlled secrets; those checks are not reported as passed.
+The repository contains a staging Compose overlay, TLS proxy, secret-file injection, bootstrap procedure, and encrypted backup/isolated restore scripts. Local encrypted backup and restore have passed against the loopback-only Docker/PostgreSQL stack. Fresh VPS deployment, public DNS/TLS and off-host retention need a configured host and storage target; those checks are not reported as passed.
 
 **What remains?**
 
@@ -60,6 +60,6 @@ PostgreSQL worker kill/restart acceptance, browser E2E for reconnect and keyboar
 - Commit IDs for the release and checkpoint milestones.
 - Latest full local test output and CI status.
 - A real staging `/healthz` and `/readyz` response after deployment.
-- Encrypted backup archive hash and a successful isolated restore record.
+- Encrypted backup archive hash and a successful isolated restore record. Local acceptance is recorded in `docs/checkpoint16-evidence.md`; off-host retention remains open.
 - Demo workflow, artifact and approval identifiers from the staging run.
 - A failure-and-fix log; never include secrets, session cookies or private source data.

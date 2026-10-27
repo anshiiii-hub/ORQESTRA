@@ -53,7 +53,7 @@ else
   (cd "$WORK" && sha256sum database.dump manifest.json > checksums.sha256)
 fi
 mkdir -p "$ROOT"
-tar -czf "$PLAIN_ARCHIVE" -C "$(dirname "$WORK")" "$(basename "$WORK")"
+COPYFILE_DISABLE=1 tar -czf "$PLAIN_ARCHIVE" -C "$(dirname "$WORK")" "$(basename "$WORK")"
 gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSPHRASE_FILE" \
   --symmetric --cipher-algo AES256 --output "$ARCHIVE_TMP" "$PLAIN_ARCHIVE"
 chmod 600 "$ARCHIVE_TMP"

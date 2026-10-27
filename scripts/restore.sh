@@ -80,7 +80,7 @@ EXISTS="$("${COMPOSE[@]}" exec -T postgres psql -U orchestra -d postgres -tAc \
 "${COMPOSE[@]}" exec -T postgres createdb -U orchestra "$TARGET_DB"
 DB_CREATED=1
 "${COMPOSE[@]}" exec -T postgres pg_restore --no-owner --exit-on-error -U orchestra \
-  --dbname "$TARGET_DB" - < "$UNPACKED/database.dump"
+  --dbname "$TARGET_DB" < "$UNPACKED/database.dump"
 "${COMPOSE[@]}" run --rm --no-deps -e "DATABASE_NAME=$TARGET_DB" migrate
 "${COMPOSE[@]}" run --rm --no-deps -e "DATABASE_NAME=$TARGET_DB" api python -c \
   'from app.db import engine; from app.migrate import require_current_schema; require_current_schema(engine); print("Restored database schema is current.")'

@@ -7,7 +7,7 @@ const ROOT = process.cwd();
 const BUILD = path.join(ROOT, ".presentation-build");
 const OUTPUT_DIR = path.join(ROOT, "deliverables");
 const DRAFT = path.join(BUILD, "orqestra-viva-draft.pptx");
-const FINAL_PPTX = path.join(OUTPUT_DIR, "ORQESTRA_AI_Final_Viva_Deck.pptx");
+const FINAL_PPTX = process.env.ORQESTRA_FINAL_PPTX || path.join(OUTPUT_DIR, "ORQESTRA_AI_Final_Viva_Deck.pptx");
 const SKILL_DIR = "/Users/anshita/.codex/plugins/cache/openai-primary-runtime/presentations/26.1025.11240/skills/presentations";
 const RUNTIME_PYTHON = "/Users/anshita/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3";
 const C = {
@@ -229,7 +229,7 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
 // 10. Backup and restore
 {
   const s = base("Backup and restore are designed as a verifiable pair", "Recovery", 10,
-    "Backup requires GPG and a passphrase file, produces a custom-format PostgreSQL dump, records schema and key row counts, and checksums the dump and manifest. Restore checks archive paths and checksums before creating a new database, applies migrations and compares counts. This code has not run against a live Docker/PostgreSQL host in this workspace. Sources: scripts/backup.sh; scripts/restore.sh; scripts/health_drill.sh.");
+    "Backup requires GPG and a passphrase file, produces a custom-format PostgreSQL dump, records schema and key row counts, and checksums the dump and manifest. Restore checks archive paths and checksums before creating a new database, applies migrations and compares counts. The encrypted backup and isolated restore passed against the local Docker/PostgreSQL stack; public hosting and off-host retention remain open. Sources: scripts/backup.sh; scripts/restore.sh; scripts/health_drill.sh; docs/checkpoint16-evidence.md.");
   const chain = [
     ["1", "Dump", "PostgreSQL custom format"],
     ["2", "Protect", "GPG AES-256 + SHA-256"],
@@ -244,18 +244,18 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
     text(s, `backup-sub-${i}`, sub, x - 70, 363, 198, 74, 21, C.muted, false, "center");
     if (i < chain.length - 1) line(s, `backup-line-${i}`, x + 88, 253, positions[i + 1] - 18, C.line, 2);
   });
-  text(s, "backup-limit", "An off-host encrypted copy and a successful live restore drill are required for disaster recovery.", 83, 514, 1100, 56, 23, C.amber, true);
+  text(s, "backup-limit", "Off-host retention and a restore on the staging host are still required for disaster recovery.", 83, 514, 1100, 56, 23, C.amber, true);
 }
 
 // 11. Gaps and acceptance
 {
   const s = base("Local checks pass; staging remains open", "Release status", 11,
-    "The latest local run passed 273 tests and skipped two PostgreSQL-only tests. Ruff, formatting, Mypy, and the frontend build pass. No Docker daemon is available here, and no hostname or cloud credentials are configured, so fresh-host TLS deployment and live backup/restore cannot be claimed. Checkpoints 13/14 also retain documented gaps: live PostgreSQL worker kill/restart, browser SSE reconnect and older-workflow search. Sources: README.md; docs/checkpoint16-operations.md; docs/dashboard-observability.md; docs/benchmarks-recovery.md.");
+    "The latest backend suite passed 273 tests with two PostgreSQL-only tests skipped; the CI-equivalent PostgreSQL selection passed. Ruff, Mypy, formatting and the frontend build pass. The loopback-only Docker/PostgreSQL stack passed all four demos and the encrypted backup/isolated restore drill. Public DNS/TLS deployment and off-host retention remain unverified because no staging host exists. Checkpoints 13/14 retain documented gaps: live PostgreSQL worker kill/restart, browser SSE reconnect and older-workflow search. Sources: README.md; docs/checkpoint16-operations.md; docs/dashboard-observability.md; docs/benchmarks-recovery.md; docs/checkpoint16-evidence.md.");
   text(s, "status-local", "Verified here", 82, 197, 395, 43, 31, C.teal, true);
-  text(s, "status-local-body", "Backend suite\nRuff, Mypy and format checks\nFrontend production build\nCompose overlay syntax", 82, 256, 425, 182, 23, C.muted);
+  text(s, "status-local-body", "Backend suite\nRuff, Mypy and format checks\nFrontend production build\nFour demos + backup/restore\nCompose overlay syntax", 82, 256, 425, 182, 23, C.muted);
   vline(s, "status-divider", 586, 204, 494, C.line, 1);
   text(s, "status-open", "Still needs a staging host", 626, 197, 540, 43, 31, C.amber, true);
-  text(s, "status-open-body", "Fresh VPS + DNS + TLS certificate\nEncrypted PostgreSQL backup and restore\nAll three core demos on the host\nExternal security and dependency review", 626, 256, 542, 188, 23, C.muted);
+  text(s, "status-open-body", "Fresh VPS + public DNS/TLS\nOff-host backup retention\nCore demos on the host\nExternal security and dependency review", 626, 256, 542, 188, 23, C.muted);
   text(s, "status-hold", "Checkpoint 16 is prepared, not signed off.", 82, 514, 1080, 48, 26, C.coral, true);
 }
 
