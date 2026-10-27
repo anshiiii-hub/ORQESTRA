@@ -7,7 +7,14 @@ from app.db import configured_database_url
 
 def test_managed_database_url_is_used_when_secret_mount_is_unavailable(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_PASSWORD_FILE", str(tmp_path / "missing-secret"))
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://managed:secret@db/orchestra")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://managed:secret@db/orchestra")
+
+    assert configured_database_url() == "postgresql+psycopg://managed:secret@db/orchestra"
+
+
+def test_managed_database_url_uses_psycopg3_without_secret_file(monkeypatch):
+    monkeypatch.delenv("DATABASE_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgres://managed:secret@db/orchestra")
 
     assert configured_database_url() == "postgresql+psycopg://managed:secret@db/orchestra"
 
