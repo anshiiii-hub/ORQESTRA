@@ -5,11 +5,19 @@ from sqlalchemy import URL, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
+def _use_psycopg3(database_url: str) -> str:
+    """Route PostgreSQL URLs through the Psycopg 3 driver installed by the app."""
+    for prefix in ("postgres://", "postgresql://", "postgresql+psycopg2://"):
+        if database_url.startswith(prefix):
+            return "postgresql+psycopg://" + database_url[len(prefix) :]
+    return database_url
+
+
 def configured_database_url() -> str:
     """Build the database URL from a mounted password secret when configured."""
     password_file = os.getenv("DATABASE_PASSWORD_FILE", "").strip()
     if not password_file:
-        return os.getenv("DATABASE_URL", "sqlite:///./orchestra.db")
+        return _use_psycopg3(os.getenv("DATABASE_URL", "sqlite:///./orchestra.db"))
     try:
         password = Path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
     except FileNotFoundError:
@@ -18,7 +26,7 @@ def configured_database_url() -> str:
         # allowing the platform-provided URL when that mount is unavailable.
         database_url = os.getenv("DATABASE_URL", "")
         if database_url:
-            return database_url
+            return _use_psycopg3(database_url)
         raise RuntimeError("Database password secret file is missing") from None
     if not password:
         raise RuntimeError("Database password secret is empty")
