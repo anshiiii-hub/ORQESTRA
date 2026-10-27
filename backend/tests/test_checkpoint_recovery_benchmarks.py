@@ -20,7 +20,7 @@ def test_healthz_and_readyz_probes(api_client, accounts):
     ready_data = ready_resp.json()
     assert ready_data["status"] == "ready"
     assert ready_data["database"] == "connected"
-    assert ready_data["schema_revision"] == "0013"
+    assert ready_data["schema_revision"] == "0014"
 
 
 def test_readyz_rejects_outdated_database_schema(api_client, accounts, migrated_database):
@@ -274,57 +274,99 @@ def test_pause_during_dispatch_requeues_inflight_task(
 def test_benchmark_suite_execution_and_summary(api_client, accounts, migrated_database):
     _, sessions, _ = migrated_database
     owner = accounts("bench-runner@example.com")
+    workspace_id = owner.post("/api/v1/workspaces", json={"name": "Benchmark WS"}).json()["id"]
 
     # Reading the matrix must not seed data or execute benchmark cases.
-    empty_summary = owner.get("/api/v1/benchmarks/summary").json()
+    empty_summary = owner.get(f"/api/v1/benchmarks/summary?workspace_id={workspace_id}").json()
     assert empty_summary["total_executions"] == 0
     with sessions() as db:
         assert db.query(BenchmarkSet).count() == 0
 
-    # 1. Execute benchmark suite with fixed routing
-    exec_resp = owner.post(
-        "/api/v1/benchmarks/executions",
-        json={"routing_mode": "fixed"},
-    )
-    assert exec_resp.status_code == 200, exec_resp.text
-    data = exec_resp.json()
-    assert data["status"] == "completed"
-    assert data["count"] >= 4
-    results = data["results"]
-    assert all(r["routing_mode"] == "fixed" for r in results)
-    assert all(r["duration_ms"] > 0 for r in results)
-    assert all(r["metadata"]["tasks_executed"] == 3 for r in results)
-    assert all(
-        r["metadata"]["execution_kind"] == "in_process_deterministic_dispatch" for r in results
-    )
-    exec_id = results[0]["execution_id"]
+    execution_ids = {}
+    for mode in ("single", "fixed", "adaptive"):
+        exec_resp = owner.post(
+            "/api/v1/benchmarks/executions",
+            json={"workspace_id": workspace_id, "routing_mode": mode, "replicates": 3},
+        )
+        assert exec_resp.status_code == 200, exec_resp.text
+        data = exec_resp.json()
+        assert data["status"] == "completed"
+        assert data["count"] == 78 * 3
+        results = data["results"]
+        assert all(r["routing_mode"] == mode for r in results)
+        assert all(r["duration_ms"] > 0 for r in results)
+        assert all(
+            r["metadata"]["execution_kind"] == "in_process_deterministic_dispatch" for r in results
+        )
+        assert all(r["metadata"]["expected_output_matched"] for r in results)
+        assert {r["metadata"]["replicate_number"] for r in results} == {1, 2, 3}
+        execution_ids[mode] = results[0]["execution_id"]
 
-    # 2. Get specific execution results
-    by_exec_resp = owner.get(f"/api/v1/benchmarks/executions/{exec_id}")
+    # Execution details are also workspace-scoped.
+    by_exec_resp = owner.get(
+        f"/api/v1/benchmarks/executions/{execution_ids['single']}?workspace_id={workspace_id}"
+    )
     assert by_exec_resp.status_code == 200
-    assert by_exec_resp.json()["execution_id"] == exec_id
-    assert len(by_exec_resp.json()["results"]) == data["count"]
+    assert len(by_exec_resp.json()["results"]) == 78 * 3
 
-    # 3. Execute benchmark suite with adaptive routing
-    exec_resp_adapt = owner.post(
-        "/api/v1/benchmarks/executions",
-        json={"routing_mode": "adaptive"},
-    )
-    assert exec_resp_adapt.status_code == 200
-    assert all(r["routing_mode"] == "adaptive" for r in exec_resp_adapt.json()["results"])
-
-    # 4. Get benchmark summary and baseline comparisons
-    summary_resp = owner.get("/api/v1/benchmarks/summary")
+    # Summary reports the frozen dataset and all three baselines.
+    summary_resp = owner.get(f"/api/v1/benchmarks/summary?workspace_id={workspace_id}")
     assert summary_resp.status_code == 200
     summary = summary_resp.json()
     assert "baselines" in summary
     assert "fixed" in summary["baselines"]
     assert "adaptive" in summary["baselines"]
-    assert summary["baselines"]["fixed"]["runs"] >= 4
-    assert summary["baselines"]["adaptive"]["runs"] >= 4
-    assert summary["total_executions"] == 2
+    assert "single" in summary["baselines"]
+    assert summary["case_count"] == 78
+    assert len(summary["dataset_sha256"]) == 64
+    assert summary["baselines"]["fixed"]["runs"] == 78 * 3
+    assert summary["baselines"]["adaptive"]["runs"] == 78 * 3
+    assert summary["baselines"]["single"]["runs"] == 78 * 3
+    assert summary["total_executions"] == 3
     assert summary["parallel_speedup"] is None
     assert "recovery_metrics" not in summary
+
+
+def test_benchmark_fixture_is_frozen_and_injection_case_is_data():
+    from app.benchmarks import load_fixture
+
+    dataset, digest = load_fixture()
+    cases = dataset["cases"]
+    assert len(cases) == 78
+    assert len({case["case_id"] for case in cases}) == len(cases)
+    assert sum(case["expected"]["status"] == "succeeded" for case in cases) == 71
+    assert sum(case["expected"]["status"] == "failed" for case in cases) == 7
+    assert len(digest) == 64
+    injection_cases = [case for case in cases if "quoted-untrusted-text" in case["category"]]
+    assert injection_cases
+    assert any("ignore previous instructions" in case["csv"] for case in injection_cases)
+
+
+def test_benchmark_workspace_isolation_and_rbac(api_client, accounts):
+    owner_a = accounts("benchmark-iso-a@example.com")
+    owner_b = accounts("benchmark-iso-b@example.com")
+    ws_a = owner_a.post("/api/v1/workspaces", json={"name": "Benchmark A"}).json()["id"]
+    ws_b = owner_b.post("/api/v1/workspaces", json={"name": "Benchmark B"}).json()["id"]
+    response = owner_a.post(
+        "/api/v1/benchmarks/executions",
+        json={"workspace_id": ws_a, "routing_mode": "single", "replicates": 3},
+    )
+    assert response.status_code == 200
+    execution_id = response.json()["results"][0]["execution_id"]
+
+    assert (
+        owner_b.post(
+            "/api/v1/benchmarks/executions",
+            json={"workspace_id": ws_a, "routing_mode": "single", "replicates": 3},
+        ).status_code
+        == 404
+    )
+    other_summary = owner_b.get(f"/api/v1/benchmarks/summary?workspace_id={ws_b}").json()
+    assert other_summary["total_executions"] == 0
+    assert (
+        owner_b.get(f"/api/v1/benchmarks/executions/{execution_id}?workspace_id={ws_b}").status_code
+        == 404
+    )
 
 
 def test_metrics_overview_endpoint(api_client, accounts):

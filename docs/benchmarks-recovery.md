@@ -26,4 +26,4 @@ The built-in registry has one compatible agent for each capability, so fixed and
 
 ## Handbook checkpoint alignment
 
-The handbook numbers recovery/approvals as Checkpoint 13, dashboard/observability as 14, benchmarks/security review as 15, and cloud deployment as 16. Repository feature commits use a different sequence. The smoke suite here is not the handbook's 50–100 case benchmark set, security review, deployment, or final submission evidence.
+The handbook numbers recovery/approvals as Checkpoint 13, dashboard/observability as 14, benchmarks/security review as 15, and cloud deployment as 16. Repository feature commits use a different sequence. Checkpoint 15 evaluation and security-review scope, methods, findings, and limits are recorded in [the Checkpoint 15 review](checkpoint15-security-review.md). Cloud deployment and final-submission evidence are still outstanding.

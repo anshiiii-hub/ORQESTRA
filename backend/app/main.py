@@ -180,8 +180,10 @@ class WorkflowRetryRequest(BaseModel):
 
 class BenchmarkExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    workspace_id: str = Field(min_length=1, max_length=36)
     set_id: str | None = None
-    routing_mode: Literal["fixed", "adaptive"] | None = None
+    routing_mode: Literal["single", "fixed", "adaptive"] = "fixed"
+    replicates: int = Field(default=3, ge=3, le=5, strict=True)
 
 
 def event(db, wid, kind, details=None):
@@ -1451,13 +1453,23 @@ def metrics_overview(
 
 @app.post("/api/v1/benchmarks/executions")
 def run_benchmarks(
-    body: BenchmarkExecutionRequest = BenchmarkExecutionRequest(),
+    body: BenchmarkExecutionRequest,
     identity: Identity = Depends(current_identity),
     db: Session = Depends(get_db),
 ):
-    results = execute_benchmark_suite(
-        db=db, set_id=body.set_id, routing_mode_override=body.routing_mode
-    )
+    from .auth import require_role
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        results = execute_benchmark_suite(
+            db=db,
+            workspace_id=body.workspace_id,
+            set_id=body.set_id,
+            routing_mode=body.routing_mode,
+            replicates=body.replicates,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
     return {
         "status": "completed",
         "count": len(results),
@@ -1482,22 +1494,33 @@ def run_benchmarks(
 
 @app.get("/api/v1/benchmarks/summary")
 def benchmark_summary(
+    workspace_id: str = Query(...),
     identity: Identity = Depends(current_identity),
     db: Session = Depends(get_db),
 ):
-    return get_benchmark_summary(db)
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
+    return get_benchmark_summary(db, workspace_id)
 
 
 @app.get("/api/v1/benchmarks/executions/{execution_id}")
 def get_benchmark_execution(
     execution_id: str,
+    workspace_id: str = Query(...),
     identity: Identity = Depends(current_identity),
     db: Session = Depends(get_db),
 ):
+    from .auth import require_role
+
+    require_role(db, workspace_id, identity)
     results = list(
         db.scalars(
             select(BenchmarkResult)
-            .where(BenchmarkResult.execution_id == execution_id)
+            .where(
+                BenchmarkResult.execution_id == execution_id,
+                BenchmarkResult.workspace_id == workspace_id,
+            )
             .order_by(BenchmarkResult.created_at.asc())
         ).all()
     )

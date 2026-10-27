@@ -1,7 +1,11 @@
-"""Run reproducible in-process checks through the registered deterministic agents."""
+"""Frozen, deterministic evaluation suite for the registered CSV agent pipeline."""
 
+import hashlib
 import json
+import math
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -15,88 +19,103 @@ from .planner import demo_plan
 from .registry import REGISTRY
 from .routing import select_route
 
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "benchmark_v2.json"
+SUITE_NAME = "ORQESTRA Deterministic Orchestration Evaluation v2"
+ALLOWED_MODES = ("single", "fixed", "adaptive")
 
-def seed_default_benchmarks(db: Session) -> BenchmarkSet:
-    """Ensure the standard fixture set exists before an explicit benchmark run."""
-    benchmark_set = db.scalar(
-        select(BenchmarkSet).where(BenchmarkSet.name == "Standard Orchestration Suite v1")
-    )
+
+@lru_cache(maxsize=1)
+def load_fixture() -> tuple[dict[str, Any], str]:
+    raw = FIXTURE_PATH.read_bytes()
+    dataset = json.loads(raw)
+    cases = dataset.get("cases")
+    if not isinstance(cases, list) or not 50 <= len(cases) <= 100:
+        raise ValueError("Benchmark fixture must contain between 50 and 100 cases")
+    keys = [case.get("case_id") for case in cases]
+    if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
+        raise ValueError("Benchmark case identifiers must be unique strings")
+    return dataset, hashlib.sha256(raw).hexdigest()
+
+
+def seed_evaluation_set(db: Session) -> BenchmarkSet:
+    dataset, digest = load_fixture()
+    benchmark_set = db.scalar(select(BenchmarkSet).where(BenchmarkSet.name == SUITE_NAME))
+    if benchmark_set is not None and benchmark_set.dataset_sha256 != digest:
+        raise ValueError("The frozen evaluation set hash changed; create a new suite version")
     if benchmark_set is None:
         benchmark_set = BenchmarkSet(
-            name="Standard Orchestration Suite v1",
-            version="1.0.0",
+            name=SUITE_NAME,
+            version=dataset["version"],
             description=(
-                "Small deterministic smoke suite for the registered CSV agent pipeline. "
-                "This is not a statistical performance or security benchmark."
+                "Frozen deterministic CSV evaluation; expected outputs are fixture-checked. "
+                "It does not measure provider quality or parallel performance."
             ),
+            dataset_sha256=digest,
         )
         db.add(benchmark_set)
         db.flush()
-        cases = [
+    known = set(
+        db.scalars(select(BenchmarkCase.case_key).where(BenchmarkCase.set_id == benchmark_set.id))
+    )
+    for item in dataset["cases"]:
+        if item["case_id"] in known:
+            continue
+        db.add(
             BenchmarkCase(
                 set_id=benchmark_set.id,
-                case_key="csv_statistics_fixed",
-                prompt="Analyze the CSV and verify the revenue statistics",
+                case_key=item["case_id"],
+                prompt=item["prompt"],
                 input_data={
-                    "csv": "product,revenue,units\nWidget,1200,10\nGadget,2500,25\nDoohickey,800,8"
+                    "csv": item["csv"],
+                    "expected": item["expected"],
+                    "category": item["category"],
                 },
-                expected_output_pattern="revenue",
+                expected_output_pattern="",
                 routing_mode="fixed",
                 is_active=True,
-            ),
-            BenchmarkCase(
-                set_id=benchmark_set.id,
-                case_key="csv_statistics_adaptive",
-                prompt="Analyze the CSV and verify the revenue statistics",
-                input_data={
-                    "csv": "product,revenue,units\nWidget,1200,10\nGadget,2500,25\nDoohickey,800,8"
-                },
-                expected_output_pattern="revenue",
-                routing_mode="adaptive",
-                is_active=True,
-            ),
-            BenchmarkCase(
-                set_id=benchmark_set.id,
-                case_key="numeric_verification_fixed",
-                prompt="Verify the numeric summary for the inventory dataset",
-                input_data={"csv": "item,count,cost\nBolt,100,5\nNut,200,2"},
-                expected_output_pattern="count",
-                routing_mode="fixed",
-                is_active=True,
-            ),
-            BenchmarkCase(
-                set_id=benchmark_set.id,
-                case_key="numeric_verification_adaptive",
-                prompt="Verify the numeric summary for the inventory dataset",
-                input_data={"csv": "item,count,cost\nBolt,100,5\nNut,200,2"},
-                expected_output_pattern="count",
-                routing_mode="adaptive",
-                is_active=True,
-            ),
-        ]
-        db.add_all(cases)
-        db.commit()
-        db.refresh(benchmark_set)
+            )
+        )
+    db.flush()
     return benchmark_set
 
 
+def _matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        return (
+            isinstance(actual, dict)
+            and set(actual) == set(expected)
+            and all(_matches(actual[key], value) for key, value in expected.items())
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(_matches(a, e) for a, e in zip(actual, expected, strict=True))
+        )
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return isinstance(actual, (int, float)) and math.isclose(
+            actual, expected, rel_tol=1e-9, abs_tol=1e-9
+        )
+    return actual == expected
+
+
 def execute_benchmark_case(
-    db: Session,
     case: BenchmarkCase,
     execution_id: str,
-    routing_mode_override: str | None = None,
+    workspace_id: str,
+    mode: str,
+    replicate_number: int,
+    dataset_hash: str,
 ) -> BenchmarkResult:
-    """Run the demo DAG through normal routing and dispatch, then persist measured results."""
-    mode = routing_mode_override or case.routing_mode
     csv_text = case.input_data.get("csv", "")
+    expected = case.input_data.get("expected", {})
     plan = demo_plan()
     outputs: dict[str, dict[str, Any]] = {}
     agents_used: list[str] = []
     total_tokens = 0
-    total_cost = 0.0
+    failure_code: str | None = None
     workflow_id = str(uuid4())
     started = time.perf_counter()
-    failure_code: str | None = None
 
     for task in plan.tasks:
         required_context = {
@@ -110,18 +129,24 @@ def execute_benchmark_case(
             for plan_task in plan.tasks
             if plan_task.id == parent_name
         }
-        selected, _decision = select_route(
-            mode=mode,
-            requested_agent=task.agent,
-            capability=task.capability,
+        selected = REGISTRY.select(
+            task.capability,
+            agent_id=task.agent,
             schema_version=task.schema_version,
             agent_version=task.agent_version,
-            required_context=required_context,
-            registry=REGISTRY,
-            histories={},
-            # The suite invokes agents in-process; this represents its one local runner.
-            worker_counts={agent.agent_id: 1 for agent in REGISTRY.all()},
         )
+        if mode != "single":
+            selected, _ = select_route(
+                mode=mode,
+                requested_agent=task.agent,
+                capability=task.capability,
+                schema_version=task.schema_version,
+                agent_version=task.agent_version,
+                required_context=required_context,
+                registry=REGISTRY,
+                histories={},
+                worker_counts={agent.agent_id: 1 for agent in REGISTRY.all()},
+            )
         context = {
             alias: outputs[parent]
             for alias, parent in task.input_bindings.items()
@@ -145,110 +170,143 @@ def execute_benchmark_case(
                 "tool_permissions": [],
             }
         )
-        agent_result = dispatch(request)
-        if agent_result.status != "succeeded" or agent_result.structured_output is None:
-            failure_code = (
-                agent_result.error.code if agent_result.error else "benchmark_agent_failed"
-            )
+        result = dispatch(request)
+        if result.status != "succeeded" or result.structured_output is None:
+            failure_code = result.error.code if result.error else "benchmark_agent_failed"
             break
-        outputs[task.id] = agent_result.structured_output
+        outputs[task.id] = result.structured_output
         agents_used.append(selected.agent_id)
-        total_tokens += (agent_result.usage.input_tokens or 0) + (
-            agent_result.usage.output_tokens or 0
-        )
-        total_cost += agent_result.usage.cost_usd or 0.0
+        total_tokens += (result.usage.input_tokens or 0) + (result.usage.output_tokens or 0)
 
     elapsed_ms = max(1, round((time.perf_counter() - started) * 1000))
-    final_output = outputs.get(plan.tasks[-1].id, {})
-    pattern_matched = (
-        case.expected_output_pattern.casefold()
-        in json.dumps(final_output, sort_keys=True).casefold()
-    )
-    score = 1.0 if failure_code is None and pattern_matched else 0.0
-    status = "succeeded" if score == 1.0 else "failed"
-
-    benchmark_result = BenchmarkResult(
+    final = outputs.get(plan.tasks[-1].id, {})
+    expected_status = expected.get("status")
+    actual_status = "failed" if failure_code else "succeeded"
+    if expected_status == "succeeded":
+        output_matches = not failure_code and _matches(
+            final.get("summary"), expected.get("summary")
+        )
+    else:
+        output_matches = bool(failure_code)
+    score = 1.0 if output_matches else 0.0
+    return BenchmarkResult(
         benchmark_case_id=case.id,
+        workspace_id=workspace_id,
         execution_id=execution_id,
         routing_mode=mode,
-        status=status,
+        replicate_number=replicate_number,
+        status="succeeded" if output_matches else "failed",
         duration_ms=elapsed_ms,
         tokens_used=total_tokens,
-        cost_usd=total_cost,
+        # No provider call is made; provider cost is not estimated or fabricated.
+        cost_usd=0.0,
         score=score,
         benchmark_metadata={
             "case_key": case.case_key,
+            "category": case.input_data.get("category", "unknown"),
             "tasks_executed": len(agents_used),
             "agents_used": agents_used,
-            "expected_output_matched": pattern_matched,
+            "actual_status": actual_status,
+            "expected_status": expected_status,
             "failure_code": failure_code,
+            "expected_output_matched": output_matches,
             "execution_kind": "in_process_deterministic_dispatch",
+            "dataset_sha256": dataset_hash,
+            "replicate_number": replicate_number,
         },
     )
-    db.add(benchmark_result)
-    db.commit()
-    db.refresh(benchmark_result)
-    return benchmark_result
 
 
 def execute_benchmark_suite(
     db: Session,
+    workspace_id: str,
     set_id: str | None = None,
-    routing_mode_override: str | None = None,
+    routing_mode: str = "fixed",
+    replicates: int = 3,
 ) -> list[BenchmarkResult]:
-    """Execute all active cases in the standard set and persist their results."""
-    benchmark_set = seed_default_benchmarks(db)
-    target_set_id = set_id or benchmark_set.id
+    if routing_mode not in ALLOWED_MODES:
+        raise ValueError("Unsupported benchmark routing mode")
+    benchmark_set = seed_evaluation_set(db)
+    if set_id and set_id != benchmark_set.id:
+        raise ValueError("Unknown evaluation set")
+    dataset, digest = load_fixture()
     cases = list(
         db.scalars(
             select(BenchmarkCase)
-            .where(BenchmarkCase.set_id == target_set_id, BenchmarkCase.is_active.is_(True))
-            .order_by(BenchmarkCase.created_at.asc(), BenchmarkCase.case_key.asc())
+            .where(BenchmarkCase.set_id == benchmark_set.id, BenchmarkCase.is_active.is_(True))
+            .order_by(BenchmarkCase.case_key.asc())
         ).all()
     )
+    if len(cases) != len(dataset["cases"]):
+        raise ValueError("Stored evaluation cases do not match the frozen dataset")
     execution_id = str(uuid4())
-    return [execute_benchmark_case(db, case, execution_id, routing_mode_override) for case in cases]
-
-
-def get_benchmark_summary(db: Session) -> dict[str, Any]:
-    """Aggregate recorded runs without creating data or implying unmeasured speedups."""
-    results = list(db.scalars(select(BenchmarkResult)).all())
-    by_mode: dict[str, list[BenchmarkResult]] = {"fixed": [], "adaptive": []}
+    results = [
+        execute_benchmark_case(case, execution_id, workspace_id, routing_mode, replicate, digest)
+        for replicate in range(1, replicates + 1)
+        for case in cases
+    ]
+    db.add_all(results)
+    db.commit()
     for result in results:
-        by_mode.setdefault(result.routing_mode, []).append(result)
+        db.refresh(result)
+    return results
 
-    def stats_for(items: list[BenchmarkResult]) -> dict[str, Any]:
-        if not items:
-            return {
-                "runs": 0,
-                "success_rate": 0.0,
-                "mean_duration_ms": 0.0,
-                "mean_score": 0.0,
-                "total_tokens": 0,
-                "total_cost_usd": 0.0,
-            }
-        succeeded = [item for item in items if item.status == "succeeded"]
+
+def get_benchmark_summary(db: Session, workspace_id: str) -> dict[str, Any]:
+    dataset, digest = load_fixture()
+    benchmark_set = db.scalar(select(BenchmarkSet).where(BenchmarkSet.name == SUITE_NAME))
+    results = list(
+        db.scalars(
+            select(BenchmarkResult)
+            .join(BenchmarkCase, BenchmarkCase.id == BenchmarkResult.benchmark_case_id)
+            .where(
+                BenchmarkResult.workspace_id == workspace_id,
+                BenchmarkCase.set_id == (benchmark_set.id if benchmark_set else ""),
+            )
+        ).all()
+    )
+    by_mode: dict[str, list[BenchmarkResult]] = {mode: [] for mode in ALLOWED_MODES}
+    for result in results:
+        if result.routing_mode in by_mode:
+            by_mode[result.routing_mode].append(result)
+
+    def stats(items: list[BenchmarkResult]) -> dict[str, Any]:
+        n = len(items)
+        successes = sum(item.status == "succeeded" for item in items)
+        rate = successes / n if n else 0.0
+        # Wilson 95% interval; describes case-replicate outcomes, not independent users.
+        z = 1.96
+        denom = 1 + z * z / n if n else 1
+        center = (rate + z * z / (2 * n)) / denom if n else 0.0
+        half = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n)) / denom if n else 0.0
         return {
-            "runs": len(items),
-            "success_rate": round(len(succeeded) / len(items), 3),
-            "mean_duration_ms": round(sum(item.duration_ms for item in items) / len(items), 1),
-            "mean_score": round(sum(item.score for item in items) / len(items), 3),
+            "runs": n,
+            "replicates": len({item.replicate_number for item in items}),
+            "success_rate": round(rate, 4),
+            "success_rate_ci95": [
+                round(max(0.0, center - half), 4),
+                round(min(1.0, center + half), 4),
+            ]
+            if n
+            else None,
+            "mean_duration_ms": round(sum(item.duration_ms for item in items) / n, 1) if n else 0.0,
+            "mean_score": round(sum(item.score for item in items) / n, 4) if n else 0.0,
             "total_tokens": sum(item.tokens_used for item in items),
-            "total_cost_usd": round(sum(item.cost_usd for item in items), 6),
+            "total_cost_usd": 0.0,
         }
 
     return {
-        "suite_name": "Standard Orchestration Suite v1",
+        "suite_name": SUITE_NAME,
+        "dataset_sha256": digest,
+        "case_count": len(dataset["cases"]),
         "total_executions": len({result.execution_id for result in results}),
-        "baselines": {
-            "fixed": stats_for(by_mode.get("fixed", [])),
-            "adaptive": stats_for(by_mode.get("adaptive", [])),
-        },
+        "baselines": {mode: stats(by_mode[mode]) for mode in ALLOWED_MODES},
         "parallel_speedup": None,
         "evaluation_notes": (
-            "Runs the registered deterministic CSV agent DAG in-process. The built-in registry "
-            "has one agent per capability, so fixed and adaptive choose the same agents. "
-            "Latency is local sequential dispatch time; parallel speedup and provider cost are "
-            "not measured by this smoke suite."
+            "Single is direct registry dispatch; fixed and adaptive use their routing policies. "
+            "The local registry has one agent per capability, so fixed and adaptive currently "
+            "select the same agents. These deterministic in-process replicates measure local "
+            "sequential dispatch and fixture agreement, not provider quality, parallel speedup, "
+            "or external API cost. Confidence intervals treat case-replicates as observations."
         ),
     }

@@ -374,6 +374,7 @@ class BenchmarkSet(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
     version: Mapped[str] = mapped_column(String(20), default="1.0.0")
     description: Mapped[str] = mapped_column(Text, default="")
+    dataset_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -398,11 +399,21 @@ class BenchmarkResult(Base):
     benchmark_case_id: Mapped[str] = mapped_column(
         ForeignKey("benchmark_cases.id", ondelete="CASCADE"), index=True
     )
+    workspace_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "workspaces.id",
+            ondelete="CASCADE",
+            name="fk_benchmark_results_workspace_id_workspaces",
+        ),
+        nullable=True,
+        index=True,
+    )
     workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
     execution_id: Mapped[str] = mapped_column(String(36), index=True)
     routing_mode: Mapped[str] = mapped_column(String(16))
+    replicate_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     status: Mapped[str] = mapped_column(String(32))
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)

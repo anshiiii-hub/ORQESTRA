@@ -29,8 +29,8 @@ type Artifact = {id: string; workspace_id: string; workflow_id: string | null; t
 type VerificationCriterion = {id: string; category: string; criterion: string; status: 'satisfied' | 'warning' | 'failed'; is_mandatory: boolean; evidence: string};
 type VerificationDefect = {criterion_id: string; severity: 'critical' | 'major' | 'minor' | 'info'; category: string; description: string; evidence_refs: string[]; repairable: boolean; suggested_task_ids: string[]};
 type VerificationReport = {id: string; workspace_id: string; workflow_id: string | null; artifact_id: string | null; decision: 'PASS' | 'PASS_WITH_WARNINGS' | 'REVISION_REQUIRED' | 'FAIL' | 'INDETERMINATE'; confidence_score: number; criteria: VerificationCriterion[]; defects: VerificationDefect[]; summary: string; created_at: string | null};
-type BenchmarkStats = {runs: number; success_rate: number; mean_duration_ms: number; mean_score: number; total_tokens: number; total_cost_usd: number};
-type BenchmarkSummary = {suite_name: string; total_executions: number; baselines: {fixed: BenchmarkStats; adaptive: BenchmarkStats}; parallel_speedup: number | null; evaluation_notes: string};
+type BenchmarkStats = {runs: number; replicates: number; success_rate: number; success_rate_ci95: [number, number] | null; mean_duration_ms: number; mean_score: number; total_tokens: number; total_cost_usd: number};
+type BenchmarkSummary = {suite_name: string; dataset_sha256: string; case_count: number; total_executions: number; baselines: {single: BenchmarkStats; fixed: BenchmarkStats; adaptive: BenchmarkStats}; parallel_speedup: number | null; evaluation_notes: string};
 type SystemReadiness = {status: string; database: string; schema_revision: string; active_workers: number; timestamp: string};
 type WorkspaceMetrics = {total_workflows: number; status_counts: Record<string, number>; active_workers: number; recovery_metrics: {eligible_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number | null}};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null; recovery_metadata?: Record<string, unknown> | null};
@@ -243,7 +243,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         const ready = await request<SystemReadiness>('/readyz', {signal: controller.signal});
         if (controller.signal.aborted) return;
         setSystemReadiness(ready);
-        const bench = await request<BenchmarkSummary>('/benchmarks/summary', {signal: controller.signal});
+        const bench = await request<BenchmarkSummary>(`/benchmarks/summary?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
         if (controller.signal.aborted) return;
         setBenchmarkSummary(bench);
         const metrics = await request<WorkspaceMetrics>(`/metrics/overview?workspace_id=${encodeURIComponent(workspace.id)}`, {signal: controller.signal});
@@ -425,10 +425,10 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     if (!workspace || !canWrite) return;
     await mutate(`/workflows/${wid}/retry`, {preserve_checkpoint: true});
   });
-  const runBenchmark = (routingMode?: string) => action(async () => {
-    if (!canWrite) return;
-    await mutate('/benchmarks/executions', {routing_mode: routingMode});
-    const updated = await request<BenchmarkSummary>('/benchmarks/summary');
+  const runBenchmark = (routingMode: 'single' | 'fixed' | 'adaptive') => action(async () => {
+    if (!workspace || !canWrite) return;
+    await mutate('/benchmarks/executions', {workspace_id: workspace.id, routing_mode: routingMode, replicates: 3});
+    const updated = await request<BenchmarkSummary>(`/benchmarks/summary?workspace_id=${encodeURIComponent(workspace.id)}`);
     setBenchmarkSummary(updated);
   });
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
@@ -959,10 +959,18 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           <BarChart3 size={18}/>
         </div>
         <p className="helper">
-          Runs the registered deterministic agents under fixed and adaptive routing. This small in-process suite checks task outputs; it is not a parallel or statistical performance benchmark.
+          Frozen {benchmarkSummary?.case_count ?? 78}-case evaluation, with three replicates per run. The single baseline dispatches directly; fixed and adaptive use their routing policies. Local deterministic agents validate fixture agreement, not provider quality or parallel performance.
         </p>
 
         <div className="benchmark-actions">
+          <button
+            className="secondary"
+            type="button"
+            disabled={busy || !canWrite}
+            onClick={() => runBenchmark('single')}
+          >
+            <Play size={13}/> Run Direct Baseline
+          </button>
           <button
             className="secondary"
             type="button"
@@ -984,7 +992,8 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
             type="button"
             disabled={busy}
             onClick={() => action(async () => {
-              const updated = await request<BenchmarkSummary>('/benchmarks/summary');
+              if (!workspace) return;
+              const updated = await request<BenchmarkSummary>(`/benchmarks/summary?workspace_id=${encodeURIComponent(workspace.id)}`);
               setBenchmarkSummary(updated);
             })}
           >
@@ -1001,18 +1010,13 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
                 <small className="muted">Not measured by this sequential smoke suite</small>
               </div>
               <div className="bench-metric-card">
-                <span>CHECKPOINT RECOVERY RATE</span>
-                <b>{workspaceMetrics?.recovery_metrics.recovery_rate === null || !workspaceMetrics ? 'N/A' : `${(workspaceMetrics.recovery_metrics.recovery_rate * 100).toFixed(1)}%`}</b>
-                <small className="muted">{workspaceMetrics ? `${workspaceMetrics.recovery_metrics.resumed_from_checkpoint} of ${workspaceMetrics.recovery_metrics.eligible_workflows} paused workflows resumed in this workspace` : 'Workspace recovery data unavailable'}</small>
-              </div>
-              <div className="bench-metric-card">
                 <span>TOTAL EXECUTIONS</span>
                 <b>{benchmarkSummary.total_executions}</b>
-                <small className="muted">In-process deterministic agent checks</small>
+                <small className="muted">{benchmarkSummary.case_count} cases · fixture SHA-256 {benchmarkSummary.dataset_sha256.slice(0, 12)}…</small>
               </div>
             </div>
 
-            <h3 style={{marginTop:20}}>Baseline comparison (Fixed vs. Adaptive)</h3>
+            <h3 style={{marginTop:20}}>Baseline comparison</h3>
             <table className="document-table">
               <thead>
                 <tr>
@@ -1026,20 +1030,28 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
               </thead>
               <tbody>
                 <tr>
-                  <td><strong>Fixed Routing Baseline</strong></td>
+                  <td><strong>Direct registry baseline</strong></td>
+                  <td>{benchmarkSummary.baselines.single.runs}</td>
+                  <td>{(benchmarkSummary.baselines.single.success_rate * 100).toFixed(1)}%</td>
+                  <td>{benchmarkSummary.baselines.single.mean_duration_ms.toFixed(0)} ms</td>
+                  <td>{(benchmarkSummary.baselines.single.mean_score * 100).toFixed(1)}%</td>
+                  <td>Not applicable</td>
+                </tr>
+                <tr>
+                  <td><strong>Fixed routing</strong></td>
                   <td>{benchmarkSummary.baselines.fixed.runs}</td>
                   <td>{(benchmarkSummary.baselines.fixed.success_rate * 100).toFixed(1)}%</td>
                   <td>{benchmarkSummary.baselines.fixed.mean_duration_ms.toFixed(0)} ms</td>
                   <td>{(benchmarkSummary.baselines.fixed.mean_score * 100).toFixed(1)}%</td>
-                  <td>${benchmarkSummary.baselines.fixed.total_cost_usd.toFixed(4)}</td>
+                  <td>Not applicable</td>
                 </tr>
                 <tr>
-                  <td><strong>Adaptive Orchestrator</strong></td>
+                  <td><strong>Adaptive routing</strong></td>
                   <td>{benchmarkSummary.baselines.adaptive.runs}</td>
                   <td>{(benchmarkSummary.baselines.adaptive.success_rate * 100).toFixed(1)}%</td>
                   <td>{benchmarkSummary.baselines.adaptive.mean_duration_ms.toFixed(0)} ms</td>
                   <td>{(benchmarkSummary.baselines.adaptive.mean_score * 100).toFixed(1)}%</td>
-                  <td>${benchmarkSummary.baselines.adaptive.total_cost_usd.toFixed(4)}</td>
+                  <td>Not applicable</td>
                 </tr>
               </tbody>
             </table>
