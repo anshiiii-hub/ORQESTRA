@@ -69,7 +69,7 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
 ## Checkpoint status
-Repository feature numbers do not match the project handbook's 16-checkpoint plan. Recovery controls do not yet provide the handbook's LangGraph PostgreSQL checkpointer or live worker-kill/restart evidence. The handbook's dashboard/observability checkpoint, 50–100 case benchmark and security review, and cloud deployment/final submission gates are not complete. See [checkpoint alignment and current limitations](docs/benchmarks-recovery.md).
+Repository feature numbers do not match the project handbook's 16-checkpoint plan. The dashboard now includes a dependency-aware DAG, replaying event stream, recent-workflow filtering, and workspace status analytics, but keyboard/SSE-reconnect E2E coverage and search beyond the latest 50 workflows remain outstanding; see [dashboard observability](docs/dashboard-observability.md). Recovery controls do not yet provide the handbook's LangGraph PostgreSQL checkpointer or live worker-kill/restart evidence. The 50–100 case benchmark and security review, and cloud deployment/final submission gates are also incomplete; see [checkpoint alignment and current limitations](docs/benchmarks-recovery.md).
 
 ## Repository
 ```

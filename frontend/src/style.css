@@ -89,3 +89,31 @@ main{min-width:0;flex:1;width:auto}.cards{grid-template-columns:repeat(4,minmax(
 .retry-btn{background:#23243a;border:1px solid #3c3f68;color:#a8afff;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
 .retry-btn:hover{background:#2f314e}
 
+.run-search-label{margin:12px 10px 6px;font-size:10px;color:#8da0b1}
+.run-search{display:flex;align-items:center;gap:8px;margin:0 4px 8px;padding:0 9px;background:#0b111b;border:1px solid #2a3645;border-radius:7px;color:#7d92a7}
+.run-search:focus-within{border-color:#5babb9;outline:2px solid #31535d;outline-offset:1px}
+.run-search input{min-width:0;padding:9px 0;background:transparent;border:0;outline:none;font-size:11px}
+.recent-empty{padding:10px;color:#74879a;font-size:11px}
+.dot.succeeded{background:#6bd4b4}.dot.failed,.dot.cancelled{background:#e38289}.dot.paused,.dot.waiting_approval{background:#e6ab5b}.dot.queued,.dot.running{background:#74b8d6}
+.readiness-pill.checking{color:#d2bc83;border-color:#4b432b;background:#1d1a13}
+.status-dot.amber{background:#e6ab5b;box-shadow:0 0 6px #e6ab5b}
+.stream-state{display:block;margin-top:6px;color:#8499ad;font-size:10px;text-transform:capitalize}
+.stream-state.live{color:#82d4af}.stream-state.reconnecting{color:#e6ab5b}.stream-state.complete{color:#90a5b8}
+.dag-scroll{width:100%;overflow:auto;border:1px solid #243143;border-radius:10px;background:radial-gradient(ellipse at top left,#13202d 0%,#0d1420 75%);}
+.dag-board{position:relative;min-width:100%;}
+.dag-edges{position:absolute;inset:0;z-index:1;overflow:visible;pointer-events:none}
+.dag-edges path{fill:none;stroke:#54788e;stroke-width:2;opacity:.8}
+.dag-nodes{position:relative;z-index:2}
+.dag-node{position:absolute;width:230px;min-height:198px;padding:13px;background:#151e2d;border:1px solid #344053;border-radius:10px;box-shadow:0 8px 24px #05091055;display:flex;flex-direction:column;gap:8px}
+.dag-node.succeeded{border-color:#37665e}.dag-node.running{border-color:#6ca7c1;box-shadow:0 0 0 1px #6ca7c133}.dag-node.failed,.dag-node.cancelled{border-color:#9c5757}.dag-node.paused,.dag-node.waiting_approval{border-color:#806435}
+.dag-node-head{display:flex;align-items:center;gap:8px;min-width:0}.dag-node-head strong{color:#e4edf5;font-size:12px;overflow-wrap:anywhere}.dag-node .node-status{font-size:9px}.dag-node>small{color:#8ba1b5;font-size:10px;line-height:1.4;overflow-wrap:anywhere}
+.dag-node details{margin-top:auto;border-top:1px solid #293649;padding-top:7px;font-size:10px;color:#97aec0}
+.dag-node summary{cursor:pointer;color:#a8c8d6;font-weight:600;outline-offset:3px}
+.dag-node dl{display:grid;grid-template-columns:80px minmax(0,1fr);gap:4px 8px;margin:9px 0 0;font-size:9px;line-height:1.35}
+.dag-node dt{color:#758ba0}.dag-node dd{margin:0;color:#c0d0dc;overflow-wrap:anywhere}
+.analytics-panel{margin-top:18px}.analytics-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.analytics-total,.analytics-status{min-width:0;padding:12px;background:#0d1420;border:1px solid #263548;border-radius:8px}
+.analytics-total span,.analytics-status span{display:block;color:#8da1b3;font-size:10px;text-transform:capitalize}.analytics-total strong{display:block;margin:7px 0 3px;color:#8ee3e6;font:700 22px 'Space Grotesk',sans-serif}.analytics-total small{color:#71869b;font-size:9px}
+.analytics-status>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:center}.analytics-status b{color:#d5e3eb;font-size:13px}.analytics-meter{height:4px;margin-top:10px;background:#202b3b;border-radius:5px;overflow:hidden}.analytics-meter span{display:block;height:100%;background:#6daec0;min-width:0}.analytics-meter .meter-succeeded{background:#65c4a1}.analytics-meter .meter-failed,.analytics-meter .meter-cancelled{background:#d0787f}.analytics-meter .meter-paused,.analytics-meter .meter-waiting_approval{background:#d7a94d}
+@media(max-width:760px){.dag-node{width:220px}.analytics-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.run-search{margin-left:0;margin-right:0}}
+

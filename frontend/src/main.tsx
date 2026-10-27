@@ -8,7 +8,7 @@ type Role = 'owner' | 'member' | 'viewer';
 type Session = {user: {id: string; email: string}; csrf_token: string};
 type Workspace = {id: string; name: string; role: Role};
 type Member = {user_id: string; email: string; role: Role};
-type Task = {id: string; name: string; agent: string; status: string; attempts: number; execution_attempts: {number: number; status: string; error_code: string | null}[]; routing_decision: {mode: string; score: number; eligible_candidate_count: number; factors: Record<string, number>; candidates: {agent: string; observations?: {average_reported_cost_usd: string; completed_attempts: number}}[]} | null; capability: string; agent_version: string; schema_version: string; error_code: string | null; execution: {request_id: string; schema_version: string; status: string} | null};
+type Task = {id: string; name: string; agent: string; status: string; dependencies?: string[]; attempts: number; execution_attempts: {number: number; status: string; error_code: string | null}[]; routing_decision: {mode: string; score: number; eligible_candidate_count: number; factors: Record<string, number>; candidates: {agent: string; observations?: {average_reported_cost_usd: string; completed_attempts: number}}[]} | null; capability: string; agent_version: string; schema_version: string; error_code: string | null; execution: {request_id: string; schema_version: string; status: string} | null};
 type Agent = {id: string; version: string; capabilities: string[]; enabled: boolean; availability: 'ready' | 'offline' | 'disabled'; available_workers: number; last_seen_at: string | null};
 type Planning = {provider?: string; model?: string | null; status: string; accounted_tokens?: number; accounted_cost_usd?: string; max_cost_usd?: string; error_code?: string | null; attempts: {number: number; status: string; input_tokens: number | null; output_tokens: number | null}[]};
 type PlannerConfiguration = {llm_available: boolean; model: string | null; provider: string | null; max_attempts: number; max_tokens: number; max_cost_usd: number; max_deadline_seconds: number};
@@ -32,11 +32,31 @@ type VerificationReport = {id: string; workspace_id: string; workflow_id: string
 type BenchmarkStats = {runs: number; success_rate: number; mean_duration_ms: number; mean_score: number; total_tokens: number; total_cost_usd: number};
 type BenchmarkSummary = {suite_name: string; total_executions: number; baselines: {fixed: BenchmarkStats; adaptive: BenchmarkStats}; parallel_speedup: number | null; evaluation_notes: string};
 type SystemReadiness = {status: string; database: string; schema_revision: string; active_workers: number; timestamp: string};
-type WorkspaceMetrics = {total_workflows: number; recovery_metrics: {eligible_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number | null}};
+type WorkspaceMetrics = {total_workflows: number; status_counts: Record<string, number>; active_workers: number; recovery_metrics: {eligible_workflows: number; resumed_from_checkpoint: number; currently_paused: number; recovery_rate: number | null}};
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null; recovery_metadata?: Record<string, unknown> | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
 const demoCSV = 'product,sales,units\nFrames,2400,12\nSunglasses,1800,9\nLenses,1200,20';
+
+function layoutDag(tasks: Task[]) {
+  const levels = new Map<string, number>();
+  for (const task of tasks) {
+    const parents = task.dependencies || [];
+    levels.set(task.name, parents.length ? Math.max(...parents.map(name => levels.get(name) ?? 0)) + 1 : 0);
+  }
+  const columns = new Map<number, Task[]>();
+  for (const task of tasks) {
+    const level = levels.get(task.name) || 0;
+    columns.set(level, [...(columns.get(level) || []), task]);
+  }
+  const positions = new Map<string, {x: number; y: number}>();
+  for (const [level, column] of columns) {
+    column.forEach((task, row) => positions.set(task.name, {x: 24 + level * 290, y: 24 + row * 230}));
+  }
+  const maxLevel = Math.max(0, ...columns.keys());
+  const maxRows = Math.max(1, ...Array.from(columns.values(), column => column.length));
+  return {positions, columns, width: 48 + maxLevel * 290 + 250, height: 48 + maxRows * 230};
+}
 
 function Brand() {
   return <div className="brand"><div className="logo"><BrainCircuit size={23}/></div><div><b>ORQESTRA <span>AI</span></b><small>ORCHESTRATION LAB</small></div></div>;
@@ -123,9 +143,11 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [prompt, setPrompt] = useState('Inspect the sales dataset, compute a numeric summary and verify the results.');
   const [csv, setCSV] = useState(demoCSV);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [runSearch, setRunSearch] = useState('');
   const [selected, setSelected] = useState('');
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [streamStatus, setStreamStatus] = useState<'live' | 'reconnecting' | 'complete' | 'offline'>('offline');
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [plannerConfiguration, setPlannerConfiguration] = useState<PlannerConfiguration | null>(null);
@@ -239,6 +261,38 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     refresh();
     return () => {controller.abort(); clearTimeout(timer);};
   }, [workspace?.id, workspace?.role, selected, refreshKey]);
+  useEffect(() => {
+    if (!selected) {
+      setStreamStatus('offline');
+      return;
+    }
+    const streamURL = new URL(`${API}/api/v1/workflows/${encodeURIComponent(selected)}/stream`);
+    streamURL.searchParams.set('after', '0');
+    const source = new EventSource(streamURL, {withCredentials: true});
+    source.onopen = () => setStreamStatus('live');
+    source.onerror = () => setStreamStatus('reconnecting');
+    source.addEventListener('workflow', rawEvent => {
+      const message = rawEvent as MessageEvent<string>;
+      const id = Number(message.lastEventId);
+      if (!Number.isSafeInteger(id) || id < 1) return;
+      try {
+        const data = JSON.parse(message.data) as {kind: string; details: Record<string, unknown>};
+        setEvents(current => current.some(item => item.id === id) ? current : [...current, {
+          id,
+          kind: data.kind,
+          details: data.details || {},
+          created_at: new Date().toISOString(),
+        }].sort((a, b) => a.id - b.id));
+        if (['workflow_succeeded', 'workflow_failed', 'workflow_cancelled'].includes(data.kind)) {
+          setStreamStatus('complete');
+          source.close();
+        }
+      } catch {
+        // Keep the REST event poll as the recovery path for malformed stream frames.
+      }
+    });
+    return () => source.close();
+  }, [selected]);
   const action = async (operation: () => Promise<void>) => {
     setBusy(true); setMessage('');
     try {await operation(); if (!actionController.current.signal.aborted) setRefreshKey(key => key + 1);}
@@ -381,6 +435,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
   const succeeded = workflow?.tasks.filter(t => t.status === 'succeeded').length || 0;
+  const normalizedRunSearch = runSearch.trim().toLocaleLowerCase();
+  const filteredRuns = runs.filter(run => !normalizedRunSearch || `${run.prompt} ${run.status}`.toLocaleLowerCase().includes(normalizedRunSearch));
+  const graphLayout = workflow ? layoutDag(workflow.tasks) : null;
   return <div className="shell">
     <aside className="sidebar"><Brand/>
       <label htmlFor="workspace">Workspace</label><select id="workspace" value={workspace?.id || ''} onChange={e => onSwitch(e.target.value)}>
@@ -390,9 +447,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         <label htmlFor="workspace-name">New workspace</label><input id="workspace-name" required maxLength={100} value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} placeholder="Workspace name"/>
         <button className="secondary" disabled={busy}>Create workspace</button>
       </form>
-      <div className="readiness-pill"><span className="status-dot green"/> System Ready · Schema 0013 · {systemReadiness?.active_workers ?? 1} worker(s)</div>
+      <div className={`readiness-pill ${systemReadiness?.status || 'checking'}`} role="status" aria-live="polite"><span className={`status-dot ${systemReadiness?.status === 'ready' ? 'green' : 'amber'}`}/>{systemReadiness ? `API ${systemReadiness.status} · Schema ${systemReadiness.schema_revision} · ${systemReadiness.active_workers} worker(s)` : 'Checking database and worker readiness…'}</div>
       <div className="navitem active"><Layers size={18}/> Workflows</div>
-      <div className="side-label">RECENT WORKFLOWS</div><div className="recent">{runs.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className="dot"/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}</div>
+      <div className="side-label">RECENT WORKFLOWS · LATEST 50</div>
+      <label className="run-search-label" htmlFor="workflow-search">Search recent workflows</label>
+      <div className="run-search"><Search size={14}/><input id="workflow-search" type="search" value={runSearch} onChange={event => setRunSearch(event.target.value)} placeholder="Prompt or status"/></div>
+      <div className="recent">{filteredRuns.map(w => <button key={w.id} className={selected === w.id ? 'recent-btn current' : 'recent-btn'} onClick={() => {setWorkflow(null); setEvents([]); setSelected(w.id);}}><span className={`dot ${w.status}`}/><div><strong>{w.prompt.slice(0, 35)}</strong><small>{w.status} · {w.id.slice(0, 8)}</small></div></button>)}{filteredRuns.length === 0 && <p className="recent-empty">No recent workflows match.</p>}</div>
       <div className="sidefoot"><span className="account-email">{session.user.email}</span><button className="secondary signout" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={14}/> Sign out</button><small>Recovery controls · evaluation smoke suite</small></div>
     </aside>
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
@@ -404,6 +464,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         ['RUNNING', runs.filter(w => ['running', 'queued', 'planning'].includes(w.status)).length, 'Active pipeline'],
         ['FAILED', runs.filter(w => w.status === 'failed').length, 'Review execution logs']
       ].map(([label, value, description]) => <div className="metric" key={label}><small>{label}</small><b>{value}</b><span>{description}</span></div>)}</div>
+      {workspaceMetrics && <section className="panel analytics-panel" aria-labelledby="workspace-analytics-title">
+        <div className="panel-head"><div><div className="eyebrow">WORKSPACE OBSERVABILITY</div><h2 id="workspace-analytics-title">Run status distribution</h2></div><BarChart3 size={18}/></div>
+        <div className="analytics-summary"><div className="analytics-total"><span>Active workers</span><strong>{workspaceMetrics.active_workers}</strong><small>Recent compatible heartbeats</small></div>
+          {Object.entries(workspaceMetrics.status_counts).sort(([a], [b]) => a.localeCompare(b)).map(([status, count]) => <div className="analytics-status" key={status}><div><span>{status.replaceAll('_', ' ')}</span><b>{count}</b></div><div className="analytics-meter"><span className={`meter-${status}`} style={{width: `${workspaceMetrics.total_workflows ? count / workspaceMetrics.total_workflows * 100 : 0}%`}}/></div></div>)}
+        </div>
+      </section>}
       <div className="columns"><section className="panel"><div className="panel-head"><div><div className="eyebrow">01 / INPUT</div><h2>Launch a workflow</h2></div><Play size={18}/></div>
         <form onSubmit={e => {e.preventDefault(); create();}}>
           <label htmlFor="planner-mode">Planning mode</label><select id="planner-mode" value={plannerMode} onChange={e => setPlannerMode(e.target.value as 'offline' | 'llm')} disabled={!canWrite || busy}>
@@ -424,12 +490,38 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
           <button className="primary" disabled={!canWrite || busy || hasDisabledAgent || (plannerMode === 'llm' && !plannerConfiguration?.llm_available)}>{busy ? 'Please wait…' : plannerMode === 'llm' ? 'Plan and execute' : 'Execute workflow'} <Play size={16}/></button>
         </form>
       </section>
-      <section className="panel results"><div className="panel-head"><div><div className="eyebrow">02 / EXECUTION</div><h2>Agent execution graph</h2></div><button className="iconbutton" aria-label="Refresh workflows" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={17}/></button></div>
+      <section className="panel results"><div className="panel-head"><div><div className="eyebrow">02 / EXECUTION</div><h2>Agent execution graph</h2><small className={`stream-state ${streamStatus}`} role="status" aria-live="polite">Event stream: {streamStatus}</small></div><button className="iconbutton" aria-label="Refresh workflows" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={17}/></button></div>
         {!workflow ? <div className="empty">Submit or select a workflow to view its execution.</div> : <>
           <div className="statusbar"><span className={`status ${workflow.status}`}>{workflow.status.toUpperCase()}</span><span>{workflow.tasks.length ? `${succeeded} / ${workflow.tasks.length} tasks completed` : workflow.status === 'waiting_approval' ? 'Suspended for human review' : 'Awaiting validated plan'}</span></div>
-          <div className="track"><div style={{width: `${workflow.tasks.length ? succeeded / workflow.tasks.length * 100 : 0}%`}}/></div>
+          <div className="track" role="progressbar" aria-label="Workflow task completion" aria-valuemin={0} aria-valuemax={workflow.tasks.length} aria-valuenow={succeeded}><div style={{width: `${workflow.tasks.length ? succeeded / workflow.tasks.length * 100 : 0}%`}}/></div>
           {workflow.status === 'waiting_approval' && <div className="approval-banner"><AlertTriangle size={18}/><div><strong>Execution suspended for human review</strong><span>A sensitive external write action requires approval before this workflow can proceed. Inspect and authorize the request below.</span></div></div>}
-          {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : workflow.status === 'waiting_approval' ? 'Workflow paused awaiting human authorization.' : 'No executable plan was accepted.'}</div> : <div className="graph">{workflow.tasks.map((t, index) => <React.Fragment key={t.id}>{index > 0 && <div className="connector">↓</div>}<div className={`node ${t.status}`}><div className="node-icon">{t.status === 'succeeded' ? <CheckCircle2 size={19}/> : t.status === 'failed' ? <XCircle size={19}/> : <Clock3 size={19}/>}</div><div><strong>{t.name.toUpperCase()}</strong><small>{t.agent} · v{t.agent_version} · {t.routing_decision ? `${t.routing_decision.mode} score ${t.routing_decision.score.toFixed(3)}` : 'fixed route'} · {t.execution_attempts.length ? `attempt ${t.execution_attempts.length} ${t.execution_attempts[t.execution_attempts.length - 1].status}` : `${t.attempts} attempts`}</small></div><span className="node-status">{t.status}</span></div></React.Fragment>)}</div>}
+          {workflow.tasks.length === 0 ? <div className="empty">{['queued', 'planning'].includes(workflow.status) ? 'Preparing a validated execution plan…' : workflow.status === 'waiting_approval' ? 'Workflow paused awaiting human authorization.' : 'No executable plan was accepted.'}</div> : graphLayout && <div className="dag-scroll"><div className="dag-board" style={{width: graphLayout.width, height: graphLayout.height}}>
+            <svg className="dag-edges" aria-hidden="true" viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}>
+              <defs><marker id="dag-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#62859b"/></marker></defs>
+              {workflow.tasks.flatMap(task => (task.dependencies || []).map(parent => {
+                const from = graphLayout.positions.get(parent); const to = graphLayout.positions.get(task.name);
+                if (!from || !to) return null;
+                const startX = from.x + 230; const startY = from.y + 100; const endX = to.x; const endY = to.y + 100;
+                return <path key={`${parent}-${task.name}`} d={`M ${startX} ${startY} C ${startX + 34} ${startY}, ${endX - 34} ${endY}, ${endX} ${endY}`} markerEnd="url(#dag-arrow)"/>;
+              }))}
+            </svg>
+            <div className="dag-nodes" role="list" aria-label="Workflow tasks and dependencies">{workflow.tasks.map(task => {
+              const position = graphLayout.positions.get(task.name) || {x: 24, y: 24};
+              const latestAttempt = task.execution_attempts.at(-1);
+              return <article key={task.id} role="listitem" className={`dag-node ${task.status}`} style={{left: position.x, top: position.y}} aria-label={`${task.name}, ${task.status}`}>
+                <div className="dag-node-head"><span className="node-icon">{task.status === 'succeeded' ? <CheckCircle2 size={17}/> : task.status === 'failed' ? <XCircle size={17}/> : <Clock3 size={17}/>}</span><strong>{task.name}</strong><span className="node-status">{task.status}</span></div>
+                <small>{task.agent} · {task.capability}</small>
+                <small>{task.dependencies?.length ? `Depends on ${task.dependencies.join(', ')}` : 'No dependencies'}</small>
+                <details><summary>Inspect attempts and contract</summary><dl>
+                  <dt>Attempts</dt><dd>{task.execution_attempts.length || task.attempts}</dd>
+                  <dt>Latest attempt</dt><dd>{latestAttempt ? `${latestAttempt.number} · ${latestAttempt.status}` : 'Not started'}</dd>
+                  <dt>Protocol</dt><dd>{task.schema_version} · agent {task.agent_version}</dd>
+                  <dt>Request</dt><dd>{task.execution?.request_id || 'Not dispatched'}</dd>
+                  {task.error_code && <><dt>Error code</dt><dd>{task.error_code}</dd></>}
+                </dl></details>
+              </article>;
+            })}</div>
+          </div></div>}
           {workflow.planning && <div className="planning-summary"><strong>{workflow.planning.provider === 'offline' ? 'Offline pipeline' : `OpenAI planning · ${workflow.planning.model || 'configured model'}`}</strong><span>Planning: {workflow.planning.status} · {workflow.planning.attempts.length} provider {workflow.planning.attempts.length === 1 ? 'call' : 'calls'}</span><span>{workflow.planning.accounted_tokens || 0} accounted tokens · Estimated cost ${Number(workflow.planning.accounted_cost_usd || 0).toFixed(6)}</span>{workflow.planning.attempts.some(attempt => ['reserved', 'indeterminate'].includes(attempt.status)) && <span className="helper">A reservation is retained because usage is pending or uncertain.</span>}{workflow.planning.error_code && <span className="error">{workflow.planning.error_code}</span>}</div>}
           {workflow.error && <p role="alert" className="error">{workflow.error}</p>}
           {canWrite && <div className="workflow-actions-bar">
