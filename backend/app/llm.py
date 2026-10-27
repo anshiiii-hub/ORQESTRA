@@ -1,4 +1,3 @@
-
 """Optional OpenAI JSON planner transport. No SDK retries or configurable remote URLs."""
 
 import json
