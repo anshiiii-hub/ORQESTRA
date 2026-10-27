@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.db import configured_database_url
+from app.db import configured_database_url, connect_args_for_url
 
 
 def test_managed_database_url_is_used_when_secret_mount_is_unavailable(monkeypatch, tmp_path):
@@ -17,6 +17,16 @@ def test_managed_database_url_uses_psycopg3_without_secret_file(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgres://managed:secret@db/orchestra")
 
     assert configured_database_url() == "postgresql+psycopg://managed:secret@db/orchestra"
+
+
+def test_postgres_connections_have_a_bounded_connect_timeout():
+    assert connect_args_for_url("postgresql+psycopg://managed:secret@db/orchestra") == {
+        "connect_timeout": 15
+    }
+
+
+def test_sqlite_connections_keep_thread_compatibility():
+    assert connect_args_for_url("sqlite:///./orchestra.db") == {"check_same_thread": False}
 
 
 def test_missing_secret_mount_without_database_url_fails(monkeypatch, tmp_path):
