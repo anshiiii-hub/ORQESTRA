@@ -356,6 +356,12 @@ def launch_demo_b_coding(db: Session, workspace_id: str, user_id: str) -> dict[s
         },
     )
 
+    # Approval creation looks the task up immediately and persists its foreign key.
+    # Flush the fixture tasks before creating the approval so PostgreSQL can
+    # resolve the referenced task in the same transaction.
+    db.add_all([t1, t2])
+    db.flush()
+
     tool_args = {
         "file_path": "tax_calculator.py",
         "patch_content": unified_diff,
@@ -390,7 +396,7 @@ def launch_demo_b_coding(db: Session, workspace_id: str, user_id: str) -> dict[s
             "state": "pending",
         },
     )
-    db.add_all([t1, t2, t3])
+    db.add(t3)
 
     patch_artifact = create_artifact(
         db=db,
@@ -512,6 +518,11 @@ def launch_demo_c_dataset(db: Session, workspace_id: str, user_id: str) -> dict[
         },
     )
 
+    # The export approval is linked to t2, so persist the fixture task before
+    # create_approval_request flushes its foreign key on PostgreSQL.
+    db.add_all([t1, t2])
+    db.flush()
+
     export_args = {
         "destination_file": "clean_sales_anomalies_2024.csv",
         "record_count": analysis.row_count,
@@ -546,7 +557,8 @@ def launch_demo_c_dataset(db: Session, workspace_id: str, user_id: str) -> dict[
             "approval_pending": approval.id,
         },
     )
-    db.add_all([t1, t2, t3])
+    db.add(t3)
+    db.flush()
 
     summary_md = (
         "# Commercial Sales Intelligence & Anomaly Walkthrough (FY2024)\n\n"

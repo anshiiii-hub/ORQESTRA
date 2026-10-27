@@ -48,13 +48,16 @@ def test_demo_launch_persists_scenario_and_outputs(
             )
             assert artifacts
             assert "not live research" in artifacts[0].content_text.lower()
-        elif demo_key == "demo_b_coding":
-            assert db.get(Approval, payload["approval_id"]) is not None
-        elif demo_key == "demo_c_dataset":
+        elif demo_key in {"demo_b_coding", "demo_c_dataset"}:
+            approval = db.get(Approval, payload["approval_id"])
+            assert approval is not None
+            assert approval.task_id in {task.id for task in tasks}
+        if demo_key == "demo_c_dataset":
             artifacts = list(
                 db.scalars(select(Artifact).where(Artifact.workflow_id == workflow.id)).all()
             )
             assert any(item.mime_type == "image/svg+xml" for item in artifacts)
+            assert all(item.task_id in {task.id for task in tasks} for item in artifacts)
 
 
 def test_demo_launch_rejects_cross_workspace_user(api_client, accounts):
