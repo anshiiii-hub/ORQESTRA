@@ -13,6 +13,15 @@ def _use_psycopg3(database_url: str) -> str:
     return database_url
 
 
+def connect_args_for_url(database_url: str) -> dict[str, object]:
+    """Keep local SQLite settings and bound managed PostgreSQL connection waits."""
+    if database_url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    if database_url.startswith(("postgres://", "postgresql://", "postgresql+")):
+        return {"connect_timeout": 15}
+    return {}
+
+
 def configured_database_url() -> str:
     """Build the database URL from a mounted password secret when configured."""
     password_file = os.getenv("DATABASE_PASSWORD_FILE", "").strip()
@@ -44,7 +53,7 @@ DATABASE_URL = configured_database_url()
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    connect_args=connect_args_for_url(DATABASE_URL),
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
