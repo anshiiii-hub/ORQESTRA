@@ -2,7 +2,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 from app import models  # noqa: F401
-from app.db import DATABASE_URL, Base
+from app.db import DATABASE_URL, Base, connect_args_for_url
 
 config = context.config
 url = config.attributes.get("database_url") or DATABASE_URL
@@ -12,7 +12,11 @@ if context.is_offline_mode():
     with context.begin_transaction():
         context.run_migrations()
 else:
-    engine = create_engine(url, poolclass=pool.NullPool)
+    engine = create_engine(
+        url,
+        poolclass=pool.NullPool,
+        connect_args=connect_args_for_url(url),
+    )
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=Base.metadata, compare_type=True)
         with context.begin_transaction():
