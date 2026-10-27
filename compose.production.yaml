@@ -1,0 +1,104 @@
+# Layer over compose.yaml with --env-file .env.production.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp, /var/run/postgresql]
+    mem_limit: 1g
+
+  migrate:
+    environment:
+      DATABASE_URL: !reset null
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      DATABASE_USER: orchestra
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: orchestra
+    secrets: [db_password]
+
+  api:
+    environment:
+      DATABASE_URL: !reset null
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      DATABASE_USER: orchestra
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: orchestra
+      APP_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env.production}
+      SESSION_COOKIE_SECURE: "true"
+      ALLOW_REGISTRATION: "false"
+      LLM_PLANNER_ENABLED: "false"
+      RESEARCH_ENABLED: "false"
+      SANDBOX_ENABLED: "false"
+    secrets: [db_password]
+    ports: !reset []
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 1g
+
+  worker:
+    environment:
+      DATABASE_URL: !reset null
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      DATABASE_USER: orchestra
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: orchestra
+      LLM_PLANNER_ENABLED: "false"
+    secrets: [db_password]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 1g
+
+  frontend:
+    build:
+      target: production
+      args:
+        VITE_API_URL: ""
+    command: !reset []
+    ports: !reset []
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN in .env.production}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: {condition: service_healthy}
+      frontend: {condition: service_healthy}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+
+secrets:
+  db_password:
+    file: ${DB_PASSWORD_SECRET_PATH:?Set DB_PASSWORD_SECRET_PATH in .env.production}
+
+volumes:
+  caddy_data:
+  caddy_config:

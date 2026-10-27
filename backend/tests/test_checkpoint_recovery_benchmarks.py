@@ -1,5 +1,6 @@
 """Tests for durable checkpoint recovery, pause/resume state machine, deep health checks, and benchmarks (PRD Section 8.4, 9.3, 14, 15, 19)."""
 
+from alembic.script import ScriptDirectory
 from sqlalchemy import select
 
 from app.models import BenchmarkSet, Event, Task, TaskAttempt, Workflow
@@ -26,14 +27,24 @@ def test_healthz_and_readyz_probes(api_client, accounts):
 def test_readyz_rejects_outdated_database_schema(api_client, accounts, migrated_database):
     from sqlalchemy import text
 
-    _, sessions, _ = migrated_database
+    _, sessions, config = migrated_database
+    head_revision = ScriptDirectory.from_config(config).get_current_head()
     with sessions() as db:
         db.execute(text("UPDATE alembic_version SET version_num = '0012'"))
         db.commit()
 
-    response = api_client.get("/readyz")
-    assert response.status_code == 503
-    assert response.json()["detail"] == "Database schema is not current"
+    try:
+        response = api_client.get("/readyz")
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Database schema is not current"
+    finally:
+        # Restore the real schema marker so migrated_database can safely downgrade.
+        with sessions() as db:
+            db.execute(
+                text("UPDATE alembic_version SET version_num = :revision"),
+                {"revision": head_revision},
+            )
+            db.commit()
 
 
 def test_workflow_pause_and_resume_state_machine(api_client, accounts, migrated_database):

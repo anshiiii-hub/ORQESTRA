@@ -9,3 +9,6 @@
 .venv/
 *.tsbuildinfo
 backups/
+.secrets/
+.env.production
+.presentation-build/

@@ -32,8 +32,12 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_column("benchmark_results", "replicate_number")
     op.drop_index("ix_benchmark_results_workspace_id", table_name="benchmark_results")
     with op.batch_alter_table("benchmark_results") as batch:
+        batch.drop_column("replicate_number")
+        batch.drop_constraint(
+            "fk_benchmark_results_workspace_id_workspaces",
+            type_="foreignkey",
+        )
         batch.drop_column("workspace_id")
     op.drop_column("benchmark_sets", "dataset_sha256")

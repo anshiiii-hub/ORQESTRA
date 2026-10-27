@@ -1547,5 +1547,41 @@ def get_benchmark_execution(
     }
 
 
+class DemoLaunchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_id: str = Field(min_length=1, max_length=36)
+
+
+@app.get("/api/v1/demos/catalog")
+def demo_catalog(
+    identity: Identity = Depends(current_identity),
+):
+    from .demos import get_demo_catalog
+
+    return {"catalog": get_demo_catalog()}
+
+
+@app.post("/api/v1/demos/{demo_key}/launch")
+def launch_demonstration(
+    demo_key: str,
+    body: DemoLaunchRequest,
+    identity: Identity = Depends(current_identity),
+    db: Session = Depends(get_db),
+):
+    from .auth import require_role
+    from .demos import launch_demo
+
+    require_role(db, body.workspace_id, identity, ("owner", "member"))
+    try:
+        result = launch_demo(
+            db=db, demo_key=demo_key, workspace_id=body.workspace_id, user_id=identity.user.id
+        )
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e)) from None
+    return result
+
+
 def next_db():
     return SessionLocal()

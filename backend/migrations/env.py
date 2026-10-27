@@ -1,13 +1,11 @@
-import os
-
 from alembic import context
 from sqlalchemy import create_engine, pool
 
 from app import models  # noqa: F401
-from app.db import Base
+from app.db import DATABASE_URL, Base
 
 config = context.config
-url = config.attributes.get("database_url") or os.getenv("DATABASE_URL", "sqlite:///./orchestra.db")
+url = config.attributes.get("database_url") or DATABASE_URL
 
 if context.is_offline_mode():
     context.configure(url=url, target_metadata=Base.metadata, literal_binds=True)

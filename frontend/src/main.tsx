@@ -36,6 +36,8 @@ type WorkspaceMetrics = {total_workflows: number; status_counts: Record<string, 
 type Workflow = {id: string; workspace_id: string; prompt: string; status: string; routing_mode: 'fixed' | 'adaptive'; tasks: Task[]; output: unknown; error: string | null; planning: Planning | null; plan: {final_task_id: string; tasks: unknown[]} | null; recovery_metadata?: Record<string, unknown> | null};
 type Run = Pick<Workflow, 'id' | 'prompt' | 'status'>;
 type RunEvent = {id: number; kind: string; details: Record<string, unknown>; created_at: string};
+type DemoCard = {key: string; title: string; category: string; description: string; features: string[]};
+type DemoRunResult = {demo: string; workflow_id: string; status: string; artifact_id?: string; chart_artifact_id?: string; approval_id?: string; rubric_grade?: string; checkpoint?: unknown};
 const demoCSV = 'product,sales,units\nFrames,2400,12\nSunglasses,1800,9\nLenses,1200,20';
 
 function layoutDag(tasks: Task[]) {
@@ -178,6 +180,8 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [reportTitle, setReportTitle] = useState('Workspace Synthesized Deliverable');
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [benchmarkSummary, setBenchmarkSummary] = useState<BenchmarkSummary | null>(null);
+  const [demoCatalog, setDemoCatalog] = useState<DemoCard[]>([]);
+  const [demoResult, setDemoResult] = useState<DemoRunResult | null>(null);
   const [systemReadiness, setSystemReadiness] = useState<SystemReadiness | null>(null);
   const [workspaceMetrics, setWorkspaceMetrics] = useState<WorkspaceMetrics | null>(null);
   const [plannerMode, setPlannerMode] = useState<'offline' | 'llm'>('offline');
@@ -199,6 +203,11 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     if (error instanceof ApiError && error.status === 401) onExpired();
     else setMessage((error as Error).message);
   };
+  useEffect(() => {
+    request<{catalog: DemoCard[]}>('/demos/catalog')
+      .then(response => setDemoCatalog(response.catalog))
+      .catch(fail);
+  }, []);
   useEffect(() => {
     if (!workspace) return;
     const controller = new AbortController();
@@ -431,6 +440,14 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     const updated = await request<BenchmarkSummary>(`/benchmarks/summary?workspace_id=${encodeURIComponent(workspace.id)}`);
     setBenchmarkSummary(updated);
   });
+  const launchDemo = (demoKey: string) => action(async () => {
+    if (!workspace || !canWrite) return;
+    const result = await mutate<DemoRunResult>(`/demos/${demoKey}/launch`, {workspace_id: workspace.id});
+    setDemoResult(result);
+    setWorkflow(null);
+    setEvents([]);
+    setSelected(result.workflow_id);
+  });
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
@@ -458,6 +475,15 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     <main><header><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>Workflow orchestration</h1><p>{workspace ? `${workspace.role} access · ${workspace.role === 'viewer' ? 'Inspect' : 'Run and inspect'} your team’s workflows.` : 'Create your first workspace to get started.'}</p></div><div className="head-tag"><span className="pulse"/> Signed in</div></header>
       {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
       {!workspace ? <section className="panel"><h2>A place for your work</h2><p className="muted">Name your workspace using the form in the sidebar. Each workspace has its own workflows and members.</p></section> : <>
+      <section className="panel demo-showcase" aria-labelledby="demo-showcase-title">
+        <div className="panel-head"><div><div className="eyebrow">GUIDED DEMONSTRATIONS</div><h2 id="demo-showcase-title">Run a showcase scenario</h2></div><PlayCircle size={18}/></div>
+        <p className="helper">Demo A and B are fixture-backed walkthroughs; they do not fetch live sources or run code in the sandbox. Demo C profiles its synthetic CSV with the real bounded analyzer. Demo D is a checkpoint-state simulation, not a worker-kill test.</p>
+        <div className="demo-grid">{demoCatalog.map(demo => <article className="demo-card" key={demo.key}>
+          <div className="eyebrow">{demo.category}</div><h3>{demo.title}</h3><p>{demo.description}</p>
+          <button className="secondary" type="button" disabled={busy || !canWrite} onClick={() => launchDemo(demo.key)}><Play size={13}/> Run scenario</button>
+        </article>)}</div>
+        {demoResult && <div className="demo-result" role="status" aria-live="polite"><strong>{demoResult.demo.replaceAll('_', ' ')} · {demoResult.status.replaceAll('_', ' ')}</strong><span>Workflow {demoResult.workflow_id}</span>{demoResult.artifact_id && <span>Report artifact {demoResult.artifact_id}</span>}{demoResult.chart_artifact_id && <span>Chart artifact {demoResult.chart_artifact_id}</span>}{demoResult.approval_id && <span>Approval {demoResult.approval_id}</span>}{demoResult.rubric_grade && <span>Walkthrough grade {demoResult.rubric_grade}</span>}</div>}
+      </section>
       <div className="cards">{[
         ['RECENT WORKFLOWS', runs.length, 'Latest 50 in this workspace'],
         ['COMPLETED', runs.filter(w => w.status === 'succeeded').length, 'Verified end-to-end'],

@@ -1,0 +1,22 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+	log {
+		output stdout
+		format console
+	}
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	@api path /api/* /health /healthz /readyz
+	reverse_proxy @api api:8000
+	reverse_proxy frontend:8080
+}

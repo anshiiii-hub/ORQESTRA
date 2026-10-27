@@ -17,6 +17,12 @@ def test_migration_round_trip_matches_models(migrated_database):
     require_current_schema(engine)
     with engine.connect() as connection:
         assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
+    command.downgrade(config, "0013")
+    assert "workspace_id" not in {
+        column["name"] for column in inspect(engine).get_columns("benchmark_results")
+    }
+    command.upgrade(config, "head")
+    require_current_schema(engine)
     command.downgrade(config, "base")
     assert set(inspect(engine).get_table_names()) <= {"alembic_version"}
     with pytest.raises(RuntimeError, match="migrations are required"):
