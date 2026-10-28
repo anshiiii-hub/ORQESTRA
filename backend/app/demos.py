@@ -572,6 +572,13 @@ def launch_demo_c_dataset(db: Session, workspace_id: str, user_id: str) -> dict[
         "These are single-year synthetic examples, not a seasonal forecast.\n\n"
         "## Verification\n"
         "Annual totals, half-year comparison, and population Z-scores are computed from the included synthetic rows.\n"
+        "\n"
+        "## Scope, Assumptions, and Limitations\n"
+        "- This is a descriptive walkthrough of a 12-month synthetic FY2024 fixture, not real enterprise sales data.\n"
+        "- The population Z-scores use only the supplied fixture rows and should not be interpreted as a forecast or causal finding.\n"
+        "\n"
+        "## Source and Provenance\n"
+        f"- Source: ORQESTRA Demo C synthetic sales fixture; SHA-256: `{analysis.content_sha256}`.\n"
     )
     art = create_artifact(
         db=db,

@@ -630,6 +630,15 @@ def verify_deliverable(
             ).all()
         )
 
+    # FR-V05 and FR-G06 describe narrative deliverables. A chart or a code
+    # patch can have a verifiable payload without containing prose sections,
+    # so do not fail those artifacts for missing citations or limitations.
+    is_narrative_artifact = artifact is not None and (
+        artifact.artifact_type == "report"
+        or artifact.artifact_type.startswith("report_")
+        or artifact.artifact_type == "summary_json"
+    )
+
     # 1. Check Deliverable Existence and Non-Empty Payload (Mandatory)
     if artifact is not None:
         if artifact.size_bytes > 0 and artifact.content_sha256:
@@ -709,7 +718,7 @@ def verify_deliverable(
         .where(DatasetAnalysis.workspace_id == workspace_id)
         .order_by(DatasetAnalysis.created_at.desc())
     )
-    if dataset_analysis and artifact and artifact.content_text:
+    if dataset_analysis and is_narrative_artifact and artifact.content_text:
         text = artifact.content_text
         if str(dataset_analysis.row_count) in text and str(dataset_analysis.column_count) in text:
             checks.append(
@@ -746,7 +755,7 @@ def verify_deliverable(
             )
 
     # 4. Check Mandatory Limitations Disclosure (FR-V05)
-    if artifact and artifact.content_text:
+    if is_narrative_artifact and artifact.content_text:
         text_lower = artifact.content_text.lower()
         if "limitation" in text_lower or "assumption" in text_lower or "bound" in text_lower:
             checks.append(
@@ -783,7 +792,7 @@ def verify_deliverable(
             )
 
     # 5. Check Source Attribution & Evidentiary Citations
-    if artifact and artifact.content_text:
+    if is_narrative_artifact and artifact.content_text:
         text_lower = artifact.content_text.lower()
         if "citation" in text_lower or "provenance" in text_lower or "source" in text_lower:
             checks.append(

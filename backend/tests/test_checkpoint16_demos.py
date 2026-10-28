@@ -77,3 +77,45 @@ def test_demo_launch_rejects_cross_workspace_user(api_client, accounts):
         ).status_code
         == 200
     )
+
+
+def test_rubric_applies_narrative_checks_only_to_reports(api_client, accounts):
+    owner = accounts("rubric-artifacts@example.com")
+    workspace_id = owner.post(
+        "/api/v1/workspaces", json={"name": "Artifact rubric scope"}
+    ).json()["id"]
+
+    assert owner.post(
+        "/api/v1/demos/demo_b_coding/launch", json={"workspace_id": workspace_id}
+    ).status_code == 200
+    assert owner.post(
+        "/api/v1/demos/demo_c_dataset/launch", json={"workspace_id": workspace_id}
+    ).status_code == 200
+
+    artifacts = owner.get(f"/api/v1/artifacts?workspace_id={workspace_id}").json()
+    by_type = {artifact["artifact_type"]: artifact for artifact in artifacts}
+    for artifact_type in ("patch", "chart"):
+        response = owner.post(
+            "/api/v1/verification/verify",
+            json={"workspace_id": workspace_id, "artifact_id": by_type[artifact_type]["id"]},
+        )
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert report["decision"] == "PASS"
+        assert report["confidence_score"] == 1.0
+        assert [check["id"] for check in report["criteria"]] == ["chk_artifact_payload"]
+
+    report_artifact = next(
+        artifact
+        for artifact in artifacts
+        if artifact["artifact_type"] == "report"
+        and artifact["name"] == "sales_anomaly_report_2024.md"
+    )
+    response = owner.post(
+        "/api/v1/verification/verify",
+        json={"workspace_id": workspace_id, "artifact_id": report_artifact["id"]},
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["decision"] == "PASS"
+    assert all(check["status"] == "satisfied" for check in report["criteria"])
