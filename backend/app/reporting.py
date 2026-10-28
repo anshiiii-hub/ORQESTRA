@@ -718,7 +718,12 @@ def verify_deliverable(
         .where(DatasetAnalysis.workspace_id == workspace_id)
         .order_by(DatasetAnalysis.created_at.desc())
     )
-    if dataset_analysis and is_narrative_artifact and artifact.content_text:
+    if (
+        dataset_analysis
+        and artifact is not None
+        and is_narrative_artifact
+        and artifact.content_text
+    ):
         text = artifact.content_text
         if str(dataset_analysis.row_count) in text and str(dataset_analysis.column_count) in text:
             checks.append(
@@ -755,7 +760,7 @@ def verify_deliverable(
             )
 
     # 4. Check Mandatory Limitations Disclosure (FR-V05)
-    if is_narrative_artifact and artifact.content_text:
+    if artifact is not None and is_narrative_artifact and artifact.content_text:
         text_lower = artifact.content_text.lower()
         if "limitation" in text_lower or "assumption" in text_lower or "bound" in text_lower:
             checks.append(
@@ -792,7 +797,7 @@ def verify_deliverable(
             )
 
     # 5. Check Source Attribution & Evidentiary Citations
-    if is_narrative_artifact and artifact.content_text:
+    if artifact is not None and is_narrative_artifact and artifact.content_text:
         text_lower = artifact.content_text.lower()
         if "citation" in text_lower or "provenance" in text_lower or "source" in text_lower:
             checks.append(
