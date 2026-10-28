@@ -4,11 +4,19 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+function endpointFor(path: string): string {
+  // Health and readiness probes are root-level API routes, outside /api/v1.
+  if (path === '/health' || path === '/healthz' || path === '/readyz') {
+    return `${API}${path}`;
+  }
+  return `${API}/api/v1${path}`;
+}
+
 export async function request<T>(path: string, init: RequestInit = {}, csrf?: string): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body) headers.set('Content-Type', 'application/json');
   if (csrf && init.method && !['GET', 'HEAD'].includes(init.method)) headers.set('X-CSRF-Token', csrf);
-  const response = await fetch(`${API}/api/v1${path}`, {...init, credentials: 'include', headers});
+  const response = await fetch(endpointFor(path), {...init, credentials: 'include', headers});
   const json = await response.json();
   if (!response.ok) {
     const detail = Array.isArray(json.detail)
