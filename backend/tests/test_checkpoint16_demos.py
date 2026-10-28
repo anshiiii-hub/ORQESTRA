@@ -81,16 +81,22 @@ def test_demo_launch_rejects_cross_workspace_user(api_client, accounts):
 
 def test_rubric_applies_narrative_checks_only_to_reports(api_client, accounts):
     owner = accounts("rubric-artifacts@example.com")
-    workspace_id = owner.post(
-        "/api/v1/workspaces", json={"name": "Artifact rubric scope"}
-    ).json()["id"]
+    workspace_id = owner.post("/api/v1/workspaces", json={"name": "Artifact rubric scope"}).json()[
+        "id"
+    ]
 
-    assert owner.post(
-        "/api/v1/demos/demo_b_coding/launch", json={"workspace_id": workspace_id}
-    ).status_code == 200
-    assert owner.post(
-        "/api/v1/demos/demo_c_dataset/launch", json={"workspace_id": workspace_id}
-    ).status_code == 200
+    assert (
+        owner.post(
+            "/api/v1/demos/demo_b_coding/launch", json={"workspace_id": workspace_id}
+        ).status_code
+        == 200
+    )
+    assert (
+        owner.post(
+            "/api/v1/demos/demo_c_dataset/launch", json={"workspace_id": workspace_id}
+        ).status_code
+        == 200
+    )
 
     artifacts = owner.get(f"/api/v1/artifacts?workspace_id={workspace_id}").json()
     by_type = {artifact["artifact_type"]: artifact for artifact in artifacts}
