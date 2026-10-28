@@ -14,7 +14,8 @@ Recorded 27 October 2026 on the development workstation:
 | Production deck package/layout validation | Passed: 12 slides, no findings; final PPTX rendered and every slide visually reviewed |
 | Isolated local production Compose smoke run | Passed 27 October 2026: images built; PostgreSQL migrated to `0014`; API `/healthz` and `/readyz` passed; frontend served over loopback-only local HTTPS; demos A/C succeeded, B waited for approval, and D paused |
 | Encrypted PostgreSQL backup and isolated restore | Passed 27 October 2026: AES-256 GPG archive created, checksums validated, restored to a new database, migrations/current schema verified and manifest row counts matched |
-| Fresh VPS deployment, public DNS/TLS and off-host backup retention | Not run: no staging hostname, operator access or off-host storage target exists |
+| Fresh VPS deployment and public DNS/TLS | Not run: no staging hostname or operator access exists |
+| Off-host encrypted backup copy | Encrypted archive uploaded to the user's Google Drive My Drive on 28 October 2026 and verified at 81 KB; the decryption passphrase remains local, so recovery still depends on that separately stored secret |
 
 The two skipped cases require the PostgreSQL environment variable in the CI workflow; the same workflow's PostgreSQL integration selection was run locally against a disposable database and passed. The local Compose smoke run binds ports only to `127.0.0.1` and does not establish public TLS, off-host backup retention or cloud acceptance.
 
@@ -55,7 +56,7 @@ The live 5-tier verifier returned `PASS` at 100% calibrated confidence for `sale
 
 The earlier `sales_anomaly_report_2024.md` artifact (SHA-256 `a80ccb537afe1cbb9e3ffa896d280a9b2450fb2577dffe4e9c71bb7bfbbc908c`) returned `REVISION_REQUIRED` at 50% because its limitations/assumptions disclosure and explicit citation provenance were missing. After rerunning Demo C, the newly generated artifact with the same filename (SHA-256 `14a77ca9483868ba88388ce2a2857c59ecfb93f88270653403b87e2023bda65b`) returned `PASS` at 100% confidence; both criteria are now satisfied. The demo added one pending CSV-export approval (ID `690ee059-3c1b-433d-842d-838fa1c69d08`). No pending write approvals were acted on.
 
-The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven nightly copies. A manual 143 KiB `.dump` copy was downloaded, encrypted with GPG AES-256, and retained locally at `backups/orqestra_20261028T094735Z.tar.gz.gpg` (SHA-256 `84f81122c1ebe696039b0181cb44aa95dd9df6eaa4fa51ef87da790de503b288`). The passphrase is stored in the Git-ignored `.secrets/backup_passphrase`; neither file is in Git. The encrypted archive decrypted successfully, its dump and manifest checksums passed, and the database restored into a second isolated local PostgreSQL 18.3 database. The restored schema was `0014`; counts matched the manifest: 1 user, 1 workspace, 5 workflows, 18 tasks, and 6 artifacts. The encrypted archive currently exists only on the development workstation. Copying it and its separately stored passphrase to an independently administered off-host location remains open.
+The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven nightly copies. A manual 143 KiB `.dump` copy was downloaded, encrypted with GPG AES-256, and saved locally at `backups/orqestra_20261028T094735Z.tar.gz.gpg` (SHA-256 `84f81122c1ebe696039b0181cb44aa95dd9df6eaa4fa51ef87da790de503b288`). On 28 October 2026 the encrypted archive was uploaded to the user's Google Drive My Drive and verified there at 81 KB. The passphrase remains in the Git-ignored `.secrets/backup_passphrase`; neither the passphrase nor the plaintext dump was uploaded or committed. The encrypted archive decrypted successfully, its dump and manifest checksums passed, and the database restored into a second isolated local PostgreSQL 18.3 database. The restored schema was `0014`; counts matched the manifest: 1 user, 1 workspace, 5 workflows, 18 tasks, and 6 artifacts. Off-host archive storage is now in place, but disaster recovery still depends on access to the separately stored passphrase; no independent passphrase escrow or remote restore drill has been verified.
 
 ## Failure and fix log
 
@@ -73,7 +74,7 @@ The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven night
 - Database credentials enter through a mounted secret file. The one-time bootstrap command refuses to create an account after the first user exists.
 - Backup archives require GPG encryption and include a manifest and checksums. Restore creates a new database, rejects the live database, applies migrations and checks row counts.
 - Guided demo boundaries are explicit: A and B use fixtures, C executes the bounded analyzer against synthetic data, and D is a persisted state simulation.
-- Checkpoint 16 remains prepared, not signed off, until a fresh-host deployment, public TLS and off-host backup retention are recorded by the operator. The local encrypted backup and isolated restore flow is verified.
+- Checkpoint 16 remains prepared, not signed off, until a fresh-host deployment and public TLS are recorded by the operator, and the off-host backup's separate passphrase recovery is addressed. The encrypted archive's Drive copy and the isolated local restore flow are verified.
 
 ## Staging acceptance record
 
