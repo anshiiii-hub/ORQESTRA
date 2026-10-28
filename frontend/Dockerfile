@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /srv
 ARG VITE_API_URL=
 ENV VITE_API_URL=${VITE_API_URL}
@@ -7,7 +7,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS development
+FROM node:26-alpine AS development
 WORKDIR /srv
 COPY package*.json ./
 RUN npm ci
