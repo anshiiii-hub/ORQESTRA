@@ -263,6 +263,8 @@ def serialize(
     }
 
 
+@app.get("/api/v1/health", include_in_schema=False)
+@app.get("/api/v1/healthz", include_in_schema=False)
 @app.get("/health")
 @app.get("/healthz")
 def health():
