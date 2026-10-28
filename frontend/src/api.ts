@@ -5,9 +5,9 @@ export class ApiError extends Error {
 }
 
 function endpointFor(path: string): string {
-  // Health and readiness probes are root-level API routes, outside /api/v1.
+   / / Blitz exposes the API under /api/v1.
   if (path === '/health' || path === '/healthz' || path === '/readyz') {
-    return `${API}${path}`;
+    return `${API}/api/v1${path}`;
   }
   return `${API}/api/v1${path}`;
 }
