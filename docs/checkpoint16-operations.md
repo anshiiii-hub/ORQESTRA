@@ -2,7 +2,7 @@
 
 ## Scope and deployment boundary
 
-The repository now has a single-VPS staging profile: `compose.yaml` plus `compose.production.yaml`, Caddy automatic HTTPS, a static frontend image, health checks, mounted database credentials, disabled public registration, and encrypted database backup/isolated restore scripts. It is not a production approval. Email verification, password recovery, login rate limiting, dependency scanning, monitoring/alert delivery, and independent penetration testing are still open controls. Keep staging behind a cloud firewall allowlist or VPN until those controls are reviewed.
+The repository now has a single-VPS staging profile: `compose.yaml` plus `compose.production.yaml`, Caddy automatic HTTPS, a static frontend image, health checks, mounted database credentials, disabled public registration, Redis-backed login throttling, and encrypted database backup/isolated restore scripts. It is not a production approval. Email verification, password recovery, dependency scanning, monitoring/alert delivery, and independent penetration testing are still open controls. Keep staging behind a cloud firewall allowlist or VPN until those controls are reviewed.
 
 This deployment does not enable live LLM planning, research fetching, or code sandboxing. In particular, do not share a production Docker daemon with the sandbox service.
 

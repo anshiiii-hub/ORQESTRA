@@ -36,7 +36,7 @@ The evaluated system is a deterministic in-process pipeline. Reported dispatch d
 
 The threat model considers unauthorized users, cross-workspace access, prompt-like retrieved data, SSRF, sandbox escape, and unauthorized external writes. Automated checks cover auth/RBAC, research URL filtering, sandbox constraints, approval authorization/fingerprinting, formula-safe exports, and benchmark workspace isolation. A source-and-test review is not a penetration test or certification.
 
-Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, and secrets mounted from host files. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, login throttling, operational alerting, external vulnerability scanning, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
+Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, Redis-backed login throttling, and secrets mounted from host files. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, operational alerting, external vulnerability scanning, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
 
 ## Limitations and future work
 

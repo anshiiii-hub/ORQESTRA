@@ -7,9 +7,13 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta, timezone
+from functools import lru_cache
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from redis import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +24,54 @@ from .models import LoginSession, Membership, User, now
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 COOKIE = "orqestra_session"
 SESSION_SECONDS = 12 * 60 * 60
+LOGIN_ATTEMPT_LIMIT = 5
+LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
+_LOGIN_ATTEMPT_SCRIPT = """
+local attempts = redis.call('INCR', KEYS[1])
+if attempts == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return {attempts, redis.call('TTL', KEYS[1])}
+"""
+
+
+@lru_cache(maxsize=1)
+def _login_limiter(redis_url: str) -> Redis:
+    return Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
+
+
+def _claim_login_attempt(email: str) -> tuple[Redis, str] | None:
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        # Local tests and the single-process development server may run without Redis.
+        return None
+
+    key = f"orqestra:auth:login:{hashlib.sha256(email.encode()).hexdigest()}"
+    try:
+        client = _login_limiter(redis_url)
+        attempts, ttl = cast(
+            Any,
+            client.eval(_LOGIN_ATTEMPT_SCRIPT, 1, key, str(LOGIN_ATTEMPT_WINDOW_SECONDS)),
+        )
+    except (RedisError, ValueError):
+        raise HTTPException(503, "Authentication service temporarily unavailable") from None
+    if int(attempts) > LOGIN_ATTEMPT_LIMIT:
+        raise HTTPException(
+            429,
+            "Too many login attempts. Try again later.",
+            headers={"Retry-After": str(max(int(ttl), 1))},
+        )
+    return client, key
+
+
+def _clear_login_attempts(limiter: tuple[Redis, str] | None) -> None:
+    if limiter is None:
+        return
+    client, key = limiter
+    try:
+        client.delete(key)
+    except RedisError:
+        raise HTTPException(503, "Authentication service temporarily unavailable") from None
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
@@ -153,10 +205,12 @@ def register(
 
 @router.post("/login", dependencies=[Depends(check_origin)])
 def login(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
+    limiter = _claim_login_attempt(body.email)
     user = db.scalar(select(User).where(User.email == body.email))
     valid = verify_password(body.password, user.password_hash if user else DUMMY_HASH)
     if user is None or not valid or not user.is_active:
         raise HTTPException(401, "Invalid email or password")
+    _clear_login_attempts(limiter)
     return session_response(db, user, request, response)
 
 
