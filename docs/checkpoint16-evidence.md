@@ -55,6 +55,8 @@ The live 5-tier verifier returned `PASS` at 100% calibrated confidence for `sale
 
 The earlier `sales_anomaly_report_2024.md` artifact (SHA-256 `a80ccb537afe1cbb9e3ffa896d280a9b2450fb2577dffe4e9c71bb7bfbbc908c`) returned `REVISION_REQUIRED` at 50% because its limitations/assumptions disclosure and explicit citation provenance were missing. After rerunning Demo C, the newly generated artifact with the same filename (SHA-256 `14a77ca9483868ba88388ce2a2857c59ecfb93f88270653403b87e2023bda65b`) returned `PASS` at 100% confidence; both criteria are now satisfied. The demo added one pending CSV-export approval (ID `690ee059-3c1b-433d-842d-838fa1c69d08`). No pending write approvals were acted on.
 
+The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven nightly copies. A manual 143 KiB `.dump` copy was downloaded, encrypted with GPG AES-256, and retained locally at `backups/orqestra_20261028T094735Z.tar.gz.gpg` (SHA-256 `84f81122c1ebe696039b0181cb44aa95dd9df6eaa4fa51ef87da790de503b288`). The passphrase is stored in the Git-ignored `.secrets/backup_passphrase`; neither file is in Git. The encrypted archive decrypted successfully, its dump and manifest checksums passed, and the database restored into a second isolated local PostgreSQL 18.3 database. The restored schema was `0014`; counts matched the manifest: 1 user, 1 workspace, 5 workflows, 18 tasks, and 6 artifacts. The encrypted archive currently exists only on the development workstation. Copying it and its separately stored passphrase to an independently administered off-host location remains open.
+
 ## Failure and fix log
 
 | Observation | Cause | Fix or disposition |
