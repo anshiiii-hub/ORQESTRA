@@ -47,6 +47,14 @@ These are response shapes from the checked-in API implementation and tests. Capt
 
 The guided demo launch endpoint returns the persisted workflow ID and the scenario's state. The API tests assert Demo A and C finish as `succeeded`, Demo B pauses as `waiting_approval`, and Demo D becomes `paused`; tests also verify workspace scoping and scenario artifact/approval records. See `backend/tests/test_checkpoint16_demos.py`.
 
+## Observed hosted workspace check — 28 October 2026
+
+The Blitz-hosted workspace is reachable over HTTPS on release `e11eb00`. The observed `GET /api/v1/readyz` response reported `status: ready`, `database: connected`, schema revision `0014`, and one active worker. The hosted deployment and endpoint are verified; this does not satisfy the fresh-VPS, operator-controlled DNS/TLS, or off-host backup-retention gates below.
+
+The live 5-tier verifier returned `PASS` at 100% calibrated confidence for `sales_numeric_profile.svg` (SHA-256 `c7cf9791122e179e31c10e193b760a0f60a7c9786eafc094717328d54d05fc3b`) and `tax_calculator_validation.patch` (SHA-256 `5d4f5b5cdc62e94cfada06494c19dac5b6a053bf8e310a67b10168142f2c6168`). It also returned `PASS` at 100% for `ev_adoption_india_report.md` (SHA-256 `dc105ae4c998c7a8622f567ee4816ae1147d6fbc84673ab74ca6a1cef12c050c`).
+
+The existing `sales_anomaly_report_2024.md` (SHA-256 `a80ccb537afe1cbb9e3ffa896d280a9b2450fb2577dffe4e9c71bb7bfbbc908c`) returned `REVISION_REQUIRED` at 50%: its limitations/assumptions disclosure failed and explicit citation provenance was missing. Regenerate this report with the corrected generator and verify the new artifact before presenting it. No pending write approvals were acted on during this check.
+
 ## Failure and fix log
 
 | Observation | Cause | Fix or disposition |
