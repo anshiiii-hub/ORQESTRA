@@ -35,6 +35,7 @@ The review used OWASP-inspired checks for access control, injection/data trust, 
 
 ## Findings and remaining risk
 
+- The first Python dependency audit reported 28 advisory matches across Starlette `0.46.2`, pytest `8.3.5`, and pip `25.1.1`. FastAPI/Starlette were upgraded to `0.162.0`/`1.10.0`, pytest to `9.2.0`, and pip to `26.2.2`; pytest was also removed from the production requirements. Both hash-locked files were regenerated. Follow-up Python and npm audits and the complete CI workflow passed on commit `3ea7df3`.
 - The benchmark endpoints now require workspace membership; execution additionally requires owner/member. Summary and detail are scoped by `workspace_id`. Historical results without a workspace remain inaccessible through these workspace endpoints.
 - Deterministic fixtures establish implementation behavior, not LLM resistance to prompt injection. The current suite is offline and does not test provider behavior or externally supplied model output.
 - Email verification, password reset, production TLS/secret rotation, repository-level Dependabot alerts, and operational monitoring remain incomplete; see `docs/authentication.md`.
