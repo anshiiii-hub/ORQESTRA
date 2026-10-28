@@ -274,6 +274,7 @@ def health():
     }
 
 
+@app.get("/api/v1/readyz", include_in_schema=False)
 @app.get("/readyz")
 def readyz(db: Session = Depends(get_db)):
     try:
