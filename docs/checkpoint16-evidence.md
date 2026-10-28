@@ -53,7 +53,7 @@ The Blitz-hosted workspace is reachable over HTTPS on release `e11eb00`. The obs
 
 The live 5-tier verifier returned `PASS` at 100% calibrated confidence for `sales_numeric_profile.svg` (SHA-256 `c7cf9791122e179e31c10e193b760a0f60a7c9786eafc094717328d54d05fc3b`) and `tax_calculator_validation.patch` (SHA-256 `5d4f5b5cdc62e94cfada06494c19dac5b6a053bf8e310a67b10168142f2c6168`). It also returned `PASS` at 100% for `ev_adoption_india_report.md` (SHA-256 `dc105ae4c998c7a8622f567ee4816ae1147d6fbc84673ab74ca6a1cef12c050c`).
 
-The existing `sales_anomaly_report_2024.md` (SHA-256 `a80ccb537afe1cbb9e3ffa896d280a9b2450fb2577dffe4e9c71bb7bfbbc908c`) returned `REVISION_REQUIRED` at 50%: its limitations/assumptions disclosure failed and explicit citation provenance was missing. Regenerate this report with the corrected generator and verify the new artifact before presenting it. No pending write approvals were acted on during this check.
+The earlier `sales_anomaly_report_2024.md` artifact (SHA-256 `a80ccb537afe1cbb9e3ffa896d280a9b2450fb2577dffe4e9c71bb7bfbbc908c`) returned `REVISION_REQUIRED` at 50% because its limitations/assumptions disclosure and explicit citation provenance were missing. After rerunning Demo C, the newly generated artifact with the same filename (SHA-256 `14a77ca9483868ba88388ce2a2857c59ecfb93f88270653403b87e2023bda65b`) returned `PASS` at 100% confidence; both criteria are now satisfied. The demo added one pending CSV-export approval (ID `690ee059-3c1b-433d-842d-838fa1c69d08`). No pending write approvals were acted on.
 
 ## Failure and fix log
 
