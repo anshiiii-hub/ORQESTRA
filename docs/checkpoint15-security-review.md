@@ -25,7 +25,7 @@ The review used OWASP-inspired checks for access control, injection/data trust, 
 | Workspace isolation and role enforcement | `backend/tests/test_auth_rbac.py`, `backend/tests/test_memory.py`, and Checkpoint 15 benchmark isolation tests |
 | Session, CSRF, and origin checks | `backend/tests/test_auth_rbac.py`; implementation in `backend/app/auth.py` |
 | Login throttling | Redis-backed atomic counter: five attempts per normalized email per 15-minute window; production Compose configures Redis and the API fails closed if Redis is unavailable |
-| Dependency security checks | CI audits pinned Python requirements with `pip-audit` and frontend lockfile dependencies with `npm audit`; Dependabot is configured for weekly Python, npm, Docker, and GitHub Actions updates |
+| Dependency security checks | CI audits pinned Python requirements with `pip-audit` and frontend lockfile dependencies with `npm audit`; GitHub's Dependency Graph and Dependabot alerts are enabled; Dependabot is configured for weekly Python, npm, Docker, and GitHub Actions updates |
 | Prompt-like CSV text stays input data | Frozen prompt-like CSV fixture and expected-output evaluation in `backend/tests/test_checkpoint_recovery_benchmarks.py`; the deterministic agents do not interpret cell values as instructions |
 | Research SSRF boundary | `backend/tests/test_research.py`; exact host allowlists, public-address checks, HTTPS and redirect restrictions in `backend/app/research.py` |
 | Untrusted code execution | `backend/tests/test_sandbox.py`; container hardening and disabled-by-default requirements in `docs/sandbox.md` |
@@ -38,8 +38,8 @@ The review used OWASP-inspired checks for access control, injection/data trust, 
 - The first Python dependency audit reported 28 advisory matches across Starlette `0.46.2`, pytest `8.3.5`, and pip `25.1.1`. FastAPI/Starlette were upgraded to `0.162.0`/`1.10.0`, pytest to `9.2.0`, and pip to `26.2.2`; pytest was also removed from the production requirements. Both hash-locked files were regenerated. Follow-up Python and npm audits and the complete CI workflow passed on commit `3ea7df3`.
 - The benchmark endpoints now require workspace membership; execution additionally requires owner/member. Summary and detail are scoped by `workspace_id`. Historical results without a workspace remain inaccessible through these workspace endpoints.
 - Deterministic fixtures establish implementation behavior, not LLM resistance to prompt injection. The current suite is offline and does not test provider behavior or externally supplied model output.
-- Email verification, password reset, production TLS/secret rotation, repository-level Dependabot alerts, and operational monitoring remain incomplete; see `docs/authentication.md`.
+- Email verification, password reset, production TLS/secret rotation, and operational monitoring remain incomplete; Dependabot alerts are enabled, but automatic security-update pull requests remain off. See `docs/authentication.md`.
 - Research and sandbox features are opt-in and retain their documented network, Docker, size, and runtime boundaries. Local Docker is unavailable in this environment, so sandbox runtime isolation was not re-exercised here.
-- The local test environment uses SQLite. PostgreSQL-only lease/concurrency tests depend on the PostgreSQL CI job. No live infrastructure penetration test, dependency vulnerability scan, or production deployment test was performed as part of this checkpoint.
+- The local test environment uses SQLite. PostgreSQL-only lease/concurrency tests depend on the PostgreSQL CI job. Dependency audit scans run in CI, but no live infrastructure penetration test or production deployment test was performed as part of this checkpoint.
 
 No claim of production security or measured adaptive-routing superiority is made.

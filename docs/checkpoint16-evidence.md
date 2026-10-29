@@ -58,6 +58,10 @@ The earlier `sales_anomaly_report_2024.md` artifact (SHA-256 `a80ccb537afe1cbb9e
 
 The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven nightly copies. A manual 143 KiB `.dump` copy was downloaded, encrypted with GPG AES-256, and saved locally at `backups/orqestra_20261028T094735Z.tar.gz.gpg` (SHA-256 `84f81122c1ebe696039b0181cb44aa95dd9df6eaa4fa51ef87da790de503b288`). On 28 October 2026 the encrypted archive was uploaded to the user's Google Drive My Drive and verified there at 81 KB. The passphrase remains in the Git-ignored `.secrets/backup_passphrase`; neither the passphrase nor the plaintext dump was uploaded or committed. The encrypted archive decrypted successfully, its dump and manifest checksums passed, and the database restored into a second isolated local PostgreSQL 18.3 database. The restored schema was `0014`; counts matched the manifest: 1 user, 1 workspace, 5 workflows, 18 tasks, and 6 artifacts. Off-host archive storage is now in place, but disaster recovery still depends on access to the separately stored passphrase; no independent passphrase escrow or remote restore drill has been verified.
 
+## Repository security settings — 29 October 2026
+
+GitHub repository settings now show the Dependency Graph and Dependabot alerts enabled. Dependabot security-update pull requests remain disabled; weekly version-update PRs are configured in `.github/dependabot.yml`. The latest `main` CI run for commit `23936a6` completed successfully: [workflow run 40673223229](https://github.com/anshiiii-hub/ORQESTRA/actions/runs/40673223229).
+
 ## Failure and fix log
 
 | Observation | Cause | Fix or disposition |

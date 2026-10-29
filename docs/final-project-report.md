@@ -36,13 +36,13 @@ The evaluated system is a deterministic in-process pipeline. Reported dispatch d
 
 The threat model considers unauthorized users, cross-workspace access, prompt-like retrieved data, SSRF, sandbox escape, and unauthorized external writes. Automated checks cover auth/RBAC, research URL filtering, sandbox constraints, approval authorization/fingerprinting, formula-safe exports, and benchmark workspace isolation. A source-and-test review is not a penetration test or certification.
 
-Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, Redis-backed login throttling, Python/npm dependency audits in CI, Dependabot update configuration, and secrets mounted from host files. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, operational alerting, repository-level Dependabot alerts, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
+Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, Redis-backed login throttling, Python/npm dependency audits in CI, GitHub Dependency Graph and Dependabot alerts, Dependabot update configuration, and secrets mounted from host files. Automatic Dependabot security-update pull requests remain off. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, operational alerting, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
 
 ## Limitations and future work
 
 The built-in agent catalog is small and deterministic. The system lacks a live-model evaluation set for research, code repair, and synthesis; broad API rate limits; email lifecycle flows; full browser E2E coverage; and live worker kill/restart evidence against PostgreSQL. The sandbox requires a separate TLS-protected Docker Engine and is disabled by default. Staging startup, TLS issuance, real PostgreSQL backup/restore, and live demo acceptance still need a fresh host with DNS and operator credentials.
 
-Future work should add held-out multi-domain evaluation, calibrated competitive routing, a durable queue/checkpointer comparison, frontend E2E tests, independent security testing, dependency scanning, monitoring/alert delivery, and deployment rehearsal on a disposable VPS.
+Future work should add held-out multi-domain evaluation, calibrated competitive routing, a durable queue/checkpointer comparison, frontend E2E tests, independent security testing, monitoring/alert delivery, and deployment rehearsal on a disposable VPS.
 
 ## Conclusion
 
