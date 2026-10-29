@@ -234,6 +234,14 @@ class LoginSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    __table_args__ = (CheckConstraint("attempts > 0", name="ck_login_attempts_positive"),)
+    email_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started_at: Mapped[int] = mapped_column(Integer, index=True)
+    attempts: Mapped[int] = mapped_column(Integer)
+
+
 class WorkerHeartbeat(Base):
     __tablename__ = "worker_heartbeats"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

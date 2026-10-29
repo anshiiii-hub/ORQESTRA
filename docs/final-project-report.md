@@ -14,7 +14,7 @@ Agent workflows can lose state after process failure, execute incompatible tools
 
 The browser connects to a React/TypeScript dashboard. FastAPI authenticates cookie sessions, validates CSRF/origin for writes, applies workspace membership checks, and persists work in PostgreSQL. Worker processes claim ready tasks through time-limited leases and store attempts/events. Pure task retries are recoverable at task boundaries. Generated reports, charts, datasets, approval records, research provenance, and document chunks are scoped to workspaces.
 
-See [the architecture diagram](architecture.md) for the deployment and service boundaries. Redis is included in Compose for a future queue/cache path but current dispatch does not depend on it. The production overlay routes public web traffic through Caddy; application/database ports are not host-published.
+See [the architecture diagram](architecture.md) for the deployment and service boundaries. PostgreSQL is the shared data store for workflow state, the task queue, and login throttling. The production overlay routes public web traffic through Caddy; application/database ports are not host-published.
 
 ## Implementation and controls
 
@@ -36,7 +36,7 @@ The evaluated system is a deterministic in-process pipeline. Reported dispatch d
 
 The threat model considers unauthorized users, cross-workspace access, prompt-like retrieved data, SSRF, sandbox escape, and unauthorized external writes. Automated checks cover auth/RBAC, research URL filtering, sandbox constraints, approval authorization/fingerprinting, formula-safe exports, and benchmark workspace isolation. A source-and-test review is not a penetration test or certification.
 
-Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, Redis-backed login throttling, Python/npm dependency audits in CI, GitHub Dependency Graph and Dependabot alerts, Dependabot update configuration, and secrets mounted from host files. Automatic Dependabot security-update pull requests remain off. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, operational alerting, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
+Deployment uses a single-VPS staging profile with Caddy TLS termination, disabled public registration, database-backed login throttling, Python/npm dependency audits in CI, GitHub Dependency Graph and Dependabot alerts, Dependabot update configuration, and secrets mounted from host files. Automatic Dependabot security-update pull requests remain off. The backup script requires GPG encryption and the restore script validates checksums before restoring into a new isolated database. Email verification, password reset, operational alerting, and independent penetration testing remain open. Keep any staging environment behind an IP allowlist or VPN.
 
 ## Limitations and future work
 

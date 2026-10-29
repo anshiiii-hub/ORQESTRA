@@ -2,13 +2,13 @@
 
 ## Scope and deployment boundary
 
-The repository now has a single-VPS staging profile: `compose.yaml` plus `compose.production.yaml`, Caddy automatic HTTPS, a static frontend image, health checks, mounted database credentials, disabled public registration, Redis-backed login throttling, Python/npm dependency audits in CI, Dependabot update configuration, and encrypted database backup/isolated restore scripts. The GitHub Dependency Graph and Dependabot alerts are enabled; automatic Dependabot security-update pull requests remain off. This is not a production approval. Email verification, password recovery, monitoring/alert delivery, and independent penetration testing remain open controls. Keep staging behind a cloud firewall allowlist or VPN until those controls are reviewed.
+The repository now has a single-VPS staging profile: `compose.yaml` plus `compose.production.yaml`, Caddy automatic HTTPS, a static frontend image, health checks, mounted database credentials, disabled public registration, database-backed login throttling, Python/npm dependency audits in CI, Dependabot update configuration, and encrypted database backup/isolated restore scripts. The GitHub Dependency Graph and Dependabot alerts are enabled; automatic Dependabot security-update pull requests remain off. This is not a production approval. Email verification, password recovery, monitoring/alert delivery, and independent penetration testing remain open controls. Keep staging behind a cloud firewall allowlist or VPN until those controls are reviewed.
 
 This deployment does not enable live LLM planning, research fetching, or code sandboxing. In particular, do not share a production Docker daemon with the sandbox service.
 
 ## Fresh VPS preparation
 
-1. Create a supported Linux VPS, attach a DNS A record for the chosen hostname, and allow inbound TCP 80/443. Restrict SSH (22) to operator addresses. Do not expose PostgreSQL, Redis, API, or the Vite development port.
+1. Create a supported Linux VPS, attach a DNS A record for the chosen hostname, and allow inbound TCP 80/443. Restrict SSH (22) to operator addresses. Do not expose PostgreSQL, API, or the Vite development port.
 2. Install Docker Engine and the Compose v2 plugin. Install `curl`, `gpg`, and `openssl` on the host. Clone the repository at the release commit.
 3. Create operator-only secret files and keep them outside version control:
 

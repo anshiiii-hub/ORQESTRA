@@ -1,3 +1,4 @@
+import hashlib
 from datetime import timedelta
 
 import pytest
@@ -5,7 +6,7 @@ from sqlalchemy import select
 
 from app import worker
 from app.auth import COOKIE, hash_password, token_hash, verify_password
-from app.models import LoginSession, Membership, User, Workflow, now
+from app.models import LoginAttempt, LoginSession, Membership, User, Workflow, now
 
 AUTH = "/api/v1/auth"
 WORKSPACES = "/api/v1/workspaces"
@@ -84,6 +85,34 @@ def test_wrong_credentials_and_session_rotation(accounts, api_client):
     assert client.post(f"{AUTH}/logout").status_code == 200
     api_client.cookies.set(COOKIE, new_token, path="/api/v1")
     assert api_client.get(f"{AUTH}/me").status_code == 401
+
+
+def test_login_attempts_are_database_throttled_and_cleared(accounts, api_client, migrated_database):
+    client = accounts("throttle@example.com")
+    payload = {"email": "throttle@example.com", "password": "wrong-password"}
+    for _ in range(5):
+        assert api_client.post(f"{AUTH}/login", json=payload).status_code == 401
+
+    limited = api_client.post(f"{AUTH}/login", json=payload)
+    assert limited.status_code == 429
+    assert 1 <= int(limited.headers["Retry-After"]) <= 15 * 60
+
+    _, sessions, _ = migrated_database
+    email_hash = hashlib.sha256(payload["email"].encode()).hexdigest()
+    with sessions.begin() as db:
+        attempt = db.get(LoginAttempt, email_hash)
+        assert attempt is not None
+        assert attempt.attempts == 6
+        attempt.window_started_at -= 15 * 60 + 1
+
+    # An expired fixed window starts over, and a successful login removes its digest.
+    assert api_client.post(f"{AUTH}/login", json=payload).status_code == 401
+    successful = client.post(
+        f"{AUTH}/login", json={"email": payload["email"], "password": PASSWORD}
+    )
+    assert successful.status_code == 200
+    with sessions() as db:
+        assert db.get(LoginAttempt, email_hash) is None
 
 
 @pytest.mark.parametrize("invalid", ["expired", "disabled"])

@@ -25,7 +25,7 @@ All mutations require an `Origin` header exactly equal to `APP_ORIGIN`. Authenti
 
 Set `SESSION_COOKIE_SECURE=true` when using HTTPS. Keep it false only for the local HTTP demonstration. `ALLOW_REGISTRATION=false` disables new account registration. These values are passed to the API by Compose. Existing `.env` files may still contain an obsolete `API_KEY`; it is ignored.
 
-When `REDIS_URL` is configured, login attempts are counted atomically by a SHA-256 digest of the normalized email. Five attempts are allowed in a 15-minute fixed window; later attempts receive HTTP 429 with `Retry-After`, and a successful login clears that email's counter. Redis errors fail closed with HTTP 503. Compose supplies Redis to the API, including the production overlay. Local runs without `REDIS_URL` do not enforce this throttle and must not be exposed to untrusted networks.
+Login attempts are counted atomically in the primary database using a SHA-256 digest of the normalized email; raw email addresses are not retained in the throttle table. Five attempts are allowed in a 15-minute fixed window; later attempts receive HTTP 429 with `Retry-After`, and a successful login clears that email's counter. Database errors fail closed with HTTP 503. Old digests are removed during periodic cleanup. This works on the managed PostgreSQL database without requiring a separate Redis service.
 
 ## API sequence
 

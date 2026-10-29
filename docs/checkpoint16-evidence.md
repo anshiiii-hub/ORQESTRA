@@ -10,7 +10,7 @@ Recorded 27 October 2026 on the development workstation:
 | PostgreSQL CI integration selection with a disposable local PostgreSQL cluster | 120 passed |
 | Ruff, Ruff format check, Mypy | Passed |
 | Frontend production build (`cd frontend && npm run build`) | Passed |
-| Production Compose merge and exposure assertions | Passed: Caddy alone publishes ports; API, frontend, PostgreSQL and Redis have no host ports; registration is disabled; DB password is mounted from a secret file |
+| Production Compose merge and exposure assertions | Passed: Caddy alone publishes ports; API, frontend and PostgreSQL have no host ports; registration is disabled; DB password is mounted from a secret file |
 | Production deck package/layout validation | Passed: 12 slides, no findings; final PPTX rendered and every slide visually reviewed |
 | Isolated local production Compose smoke run | Passed 27 October 2026: images built; PostgreSQL migrated to `0014`; API `/healthz` and `/readyz` passed; frontend served over loopback-only local HTTPS; demos A/C succeeded, B waited for approval, and D paused |
 | Encrypted PostgreSQL backup and isolated restore | Passed 27 October 2026: AES-256 GPG archive created, checksums validated, restored to a new database, migrations/current schema verified and manifest row counts matched |
@@ -61,6 +61,10 @@ The Blitz database dashboard reported PostgreSQL 17 under 1 MiB with seven night
 ## Repository security settings — 29 October 2026
 
 GitHub repository settings now show the Dependency Graph and Dependabot alerts enabled. Dependabot security-update pull requests remain disabled; weekly version-update PRs are configured in `.github/dependabot.yml`. The latest `main` CI run for commit `23936a6` completed successfully: [workflow run 40673223229](https://github.com/anshiiii-hub/ORQESTRA/actions/runs/40673223229).
+
+## Hosted follow-up — 29 October 2026
+
+The Blitz dashboard showed the app partly asleep, with frontend and API sleeping and the worker running. Its last successful hosted release was `23936a6`; the documentation-only `77572fa` version was queued behind 18 free builders. The pending build requested `REDIS_URL`, while the account's free plan allows one managed database and ORQESTRA already uses it for PostgreSQL. The login throttle was changed to use an atomic PostgreSQL counter instead, avoiding a new paid plan, database, or external service. The resulting release still needs to build before hosted readiness and demo checks can be repeated.
 
 ## Failure and fix log
 

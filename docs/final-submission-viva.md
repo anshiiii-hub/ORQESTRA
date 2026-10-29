@@ -6,7 +6,7 @@
 |---|---|---|
 | 0:00–0:35 | 1 | State the problem: reliable execution around agents, not autonomous intelligence alone. |
 | 0:35–1:20 | 2 | Explain the three objectives: executable plans, durable progress, reviewable results. |
-| 1:20–2:15 | 3 | Trace browser → Caddy → API → PostgreSQL and worker → PostgreSQL. Explain Redis is not in the current dispatch path. |
+| 1:20–2:15 | 3 | Trace browser → Caddy → API → PostgreSQL and worker → PostgreSQL. Explain that PostgreSQL also provides atomic login throttling. |
 | 2:15–3:00 | 4 | Walk through validation, persistence, leases, dispatch, verification and result fencing. Emphasize at-least-once semantics. |
 | 3:00–3:45 | 5 | Describe workspace authorization, approval fingerprints, untrusted retrieved text and optional sandbox isolation. |
 | 3:45–5:00 | 6–7 | Explain the frozen 78-case fixture design and what its results can and cannot support. |
@@ -35,9 +35,9 @@ It provides durable workflow/task state and transactional worker claims. The wor
 
 No. A task can run again after lease expiry. The design uses at-least-once recovery, stale-result fencing and pure/idempotent tasks where possible. External side effects need stronger deduplication and approval.
 
-**Why is Redis in the deployment?**
+**Why does login throttling use PostgreSQL?**
 
-Redis is provisioned but not part of the current execution path. PostgreSQL remains the source of truth for worker claims. Redis is future infrastructure, not a hidden dependency.
+The deployment platform provides one managed database on its free tier. PostgreSQL is already the source of truth for worker claims, so an atomic counter table provides shared login throttling without another service or secret.
 
 **What did the benchmark establish?**
 

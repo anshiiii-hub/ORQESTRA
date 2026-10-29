@@ -24,7 +24,7 @@ The review used OWASP-inspired checks for access control, injection/data trust, 
 |---|---|
 | Workspace isolation and role enforcement | `backend/tests/test_auth_rbac.py`, `backend/tests/test_memory.py`, and Checkpoint 15 benchmark isolation tests |
 | Session, CSRF, and origin checks | `backend/tests/test_auth_rbac.py`; implementation in `backend/app/auth.py` |
-| Login throttling | Redis-backed atomic counter: five attempts per normalized email per 15-minute window; production Compose configures Redis and the API fails closed if Redis is unavailable |
+| Login throttling | Database-backed atomic counter: five attempts per normalized email per 15-minute window; raw email addresses are not retained, and the API fails closed if the database is unavailable |
 | Dependency security checks | CI audits pinned Python requirements with `pip-audit` and frontend lockfile dependencies with `npm audit`; GitHub's Dependency Graph and Dependabot alerts are enabled; Dependabot is configured for weekly Python, npm, Docker, and GitHub Actions updates |
 | Prompt-like CSV text stays input data | Frozen prompt-like CSV fixture and expected-output evaluation in `backend/tests/test_checkpoint_recovery_benchmarks.py`; the deterministic agents do not interpret cell values as instructions |
 | Research SSRF boundary | `backend/tests/test_research.py`; exact host allowlists, public-address checks, HTTPS and redirect restrictions in `backend/app/research.py` |

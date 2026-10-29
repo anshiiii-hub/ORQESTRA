@@ -18,14 +18,6 @@ services:
       test: ["CMD-SHELL", "pg_isready -U orchestra -d orchestra"]
       interval: 5s
       retries: 15
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes: [redis_data:/data]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      retries: 15
   migrate:
     build: ./backend
     command: ["alembic", "upgrade", "head"]
@@ -38,7 +30,6 @@ services:
     environment:
       <<: *planner-environment
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
-      REDIS_URL: redis://redis:6379/0
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
@@ -59,7 +50,6 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
     restart: unless-stopped
   worker:
     build: ./backend
@@ -67,12 +57,10 @@ services:
     environment:
       <<: *planner-environment
       DATABASE_URL: postgresql+psycopg://orchestra:${POSTGRES_PASSWORD:-localdev_only_change_me}@postgres:5432/orchestra
-      REDIS_URL: redis://redis:6379/0
       DISABLED_AGENTS: ${DISABLED_AGENTS:-}
     depends_on:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
     restart: unless-stopped
   frontend:
     build:
@@ -84,4 +72,3 @@ services:
     depends_on: [api]
 volumes:
   postgres_data:
-  redis_data:

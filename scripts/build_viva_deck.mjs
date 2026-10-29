@@ -104,7 +104,7 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
 // 3. Architecture diagram
 {
   const s = base("The service separates browser, API, worker and state", "Architecture", 3,
-    "Walk left to right. Caddy is the only public service in the production overlay. The API and separate polling worker share PostgreSQL state. Redis is included in Compose but is not used for task dispatch. Mounted password files feed the database and application configuration. Sources: docs/architecture.md; compose.yaml; compose.production.yaml.");
+    "Walk left to right. Caddy is the only public service in the production overlay. The API and separate polling worker share PostgreSQL state, which also stores atomic login-attempt windows. Mounted password files feed the database and application configuration. Sources: docs/architecture.md; compose.yaml; compose.production.yaml.");
   const browser = shape(s, "browser", "rect", 75, 264, 164, 86, C.bg2, C.line, 2);
   text(s, "browser-label", "Browser\nReact dashboard", 87, 274, 140, 65, 22, C.ink, true, "center");
   const caddy = shape(s, "caddy", "rect", 304, 240, 206, 132, C.bg2, C.teal, 2);
@@ -114,7 +114,7 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
   const api = shape(s, "api", "rect", 602, 325, 220, 92, C.bg2, C.teal, 2);
   text(s, "api-label", "FastAPI\nauth + orchestration", 616, 334, 192, 73, 22, C.ink, true, "center");
   const db = shape(s, "postgres", "rect", 928, 203, 235, 92, C.bg2, C.teal, 2);
-  text(s, "postgres-label", "PostgreSQL\nworkflows + artifacts", 944, 211, 204, 74, 22, C.ink, true, "center");
+  text(s, "postgres-label", "PostgreSQL\nworkflow + auth state", 944, 211, 204, 74, 22, C.ink, true, "center");
   const worker = shape(s, "worker", "rect", 928, 342, 235, 92, C.bg2, C.amber, 2);
   text(s, "worker-label", "Polling worker\nleased task execution", 944, 350, 204, 74, 22, C.ink, true, "center");
   s.shapes.connect(browser, caddy, { kind: "straight", fromSide: "right", toSide: "left", line: { style: "solid", fill: C.teal, width: 2 } });
@@ -122,7 +122,7 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
   s.shapes.connect(caddy, api, { kind: "elbow", fromSide: "right", toSide: "left", line: { style: "solid", fill: C.teal, width: 2 } });
   s.shapes.connect(api, db, { kind: "elbow", fromSide: "right", toSide: "left", line: { style: "solid", fill: C.teal, width: 2 } });
   s.shapes.connect(worker, db, { kind: "straight", fromSide: "left", toSide: "right", line: { style: "solid", fill: C.amber, width: 2 } });
-  text(s, "redis-note", "Redis is provisioned for future use; dispatch currently reads and writes PostgreSQL.", 74, 503, 1080, 48, 21, C.muted);
+  text(s, "auth-note", "Login throttling shares the same database: five attempts per normalized email every 15 minutes.", 74, 503, 1080, 48, 21, C.muted);
   text(s, "security-note", "Production ingress: Caddy only. API, database and frontend ports stay private.", 74, 560, 1080, 48, 21, C.teal, true);
 }
 
@@ -219,7 +219,7 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
   text(s, "deploy-entry-body", "Caddy on 80/443\nAutomatic TLS\nSecurity headers", 84, 266, 275, 140, 24, C.muted);
   vline(s, "deploy-divider-1", 400, 207, 422, C.line, 1);
   text(s, "deploy-state", "Private services", 443, 206, 300, 45, 30, C.ink, true);
-  text(s, "deploy-state-body", "FastAPI + worker\nPostgreSQL + Redis\nNo host port mappings", 443, 266, 300, 140, 24, C.muted);
+  text(s, "deploy-state-body", "FastAPI + worker\nPostgreSQL\nNo host port mappings", 443, 266, 300, 140, 24, C.muted);
   vline(s, "deploy-divider-2", 792, 207, 422, C.line, 1);
   text(s, "deploy-secret", "Operator controls", 834, 206, 340, 45, 30, C.amber, true);
   text(s, "deploy-secret-body", "Mounted DB secret\nRegistration disabled\nFirst account via CLI bootstrap", 834, 266, 340, 140, 24, C.muted);
@@ -249,22 +249,22 @@ function paragraph(s, prefix, heading, body, y, accent = C.teal, bodySize = 23) 
 
 // 11. Gaps and acceptance
 {
-  const s = base("Local checks pass; staging remains open", "Release status", 11,
-    "The latest backend suite passed 273 tests with two PostgreSQL-only tests skipped; the CI-equivalent PostgreSQL selection passed. Ruff, Mypy, formatting and the frontend build pass. The loopback-only Docker/PostgreSQL stack passed all four demos and the encrypted backup/isolated restore drill. Public DNS/TLS deployment and off-host retention remain unverified because no staging host exists. Checkpoints 13/14 retain documented gaps: live PostgreSQL worker kill/restart, browser SSE reconnect and older-workflow search. Sources: README.md; docs/checkpoint16-operations.md; docs/dashboard-observability.md; docs/benchmarks-recovery.md; docs/checkpoint16-evidence.md.");
-  text(s, "status-local", "Verified here", 82, 197, 395, 43, 31, C.teal, true);
-  text(s, "status-local-body", "Backend suite\nRuff, Mypy and format checks\nFrontend production build\nFour demos + backup/restore\nCompose overlay syntax", 82, 256, 425, 182, 23, C.muted);
+  const s = base("Local checks pass; hosted release needs verification", "Release status", 11,
+    "The latest backend suite passed 281 tests, with two PostgreSQL-only tests skipped locally. Ruff, Mypy, formatting and the frontend build pass. The loopback-only Docker/PostgreSQL stack passed all four demos and the encrypted backup/isolated restore drill. The managed host has a free builder queue; verify the release built from PostgreSQL-backed throttling before repeating hosted health and demo checks. Public TLS details and off-host retention remain unverified. Checkpoints 13/14 retain documented gaps: live PostgreSQL worker kill/restart, browser SSE reconnect and older-workflow search. Sources: README.md; docs/checkpoint16-operations.md; docs/dashboard-observability.md; docs/benchmarks-recovery.md; docs/checkpoint16-evidence.md.");
+  text(s, "status-local", "Verified locally", 82, 197, 395, 43, 31, C.teal, true);
+  text(s, "status-local-body", "Backend suite: 281 passed\nRuff, Mypy and format checks\nFrontend production build\nFour demos + backup/restore\nCompose overlay syntax", 82, 256, 425, 182, 23, C.muted);
   vline(s, "status-divider", 586, 204, 494, C.line, 1);
-  text(s, "status-open", "Still needs a staging host", 626, 197, 540, 43, 31, C.amber, true);
-  text(s, "status-open-body", "Fresh VPS + public DNS/TLS\nOff-host backup retention\nCore demos on the host\nExternal security and dependency review", 626, 256, 542, 188, 23, C.muted);
+  text(s, "status-open", "Hosted checks still open", 626, 197, 540, 43, 31, C.amber, true);
+  text(s, "status-open-body", "Successful free-host build + health check\nCore demos on the host\nOff-host backup retention\nExternal security and dependency review", 626, 256, 542, 188, 23, C.muted);
   text(s, "status-hold", "Checkpoint 16 is prepared, not signed off.", 82, 514, 1080, 48, 26, C.coral, true);
 }
 
 // 12. Viva close
 {
   const s = base("Three questions worth defending", "Discussion", 12,
-    "Use these prompts to close. First: why at-least-once and stale-result fencing are more accurate than exactly-once. Second: why Redis is present but unused in task dispatch. Third: what additional competing agents, held-out tasks and independent observations would be needed to compare routing policies. Invite questions without implying production readiness.");
+    "Use these prompts to close. First: why at-least-once and stale-result fencing are more accurate than exactly-once. Second: why PostgreSQL-backed login throttling fits the managed hosting limits. Third: what additional competing agents, held-out tasks and independent observations would be needed to compare routing policies. Invite questions without implying production readiness.");
   paragraph(s, "viva-a", "Why at-least-once recovery?", "Workers can repeat a pure task after lease expiry; fencing prevents stale attempts from overwriting newer work.", 204);
-  paragraph(s, "viva-b", "Why is Redis not in the dispatch path?", "The current durable scheduler claims tasks from PostgreSQL; Redis is provisioned for a future queue/cache design.", 342, C.amber);
+  paragraph(s, "viva-b", "Why use PostgreSQL for login throttling?", "The managed deployment provides PostgreSQL, so an atomic counter table avoids another service while sharing limits across API instances.", 342, C.amber);
   paragraph(s, "viva-c", "What would prove adaptive routing helps?", "A held-out task set, competing agents per capability, controlled repeated runs and uncertainty-aware comparison.", 480, C.coral);
 }
 

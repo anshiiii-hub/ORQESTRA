@@ -21,7 +21,7 @@ def test_healthz_and_readyz_probes(api_client, accounts):
     ready_data = ready_resp.json()
     assert ready_data["status"] == "ready"
     assert ready_data["database"] == "connected"
-    assert ready_data["schema_revision"] == "0014"
+    assert ready_data["schema_revision"] == "0015"
 
 
 def test_readyz_rejects_outdated_database_schema(api_client, accounts, migrated_database):

@@ -5,72 +5,98 @@ import hmac
 import os
 import re
 import secrets
+import threading
+import time
 from dataclasses import dataclass
 from datetime import timedelta, timezone
-from functools import lru_cache
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from redis import Redis
-from redis.exceptions import RedisError
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import case, delete, select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import LoginSession, Membership, User, now
+from .models import LoginAttempt, LoginSession, Membership, User, now
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 COOKIE = "orqestra_session"
 SESSION_SECONDS = 12 * 60 * 60
 LOGIN_ATTEMPT_LIMIT = 5
 LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
-_LOGIN_ATTEMPT_SCRIPT = """
-local attempts = redis.call('INCR', KEYS[1])
-if attempts == 1 then
-    redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-return {attempts, redis.call('TTL', KEYS[1])}
-"""
+LOGIN_ATTEMPT_RETENTION_SECONDS = 24 * 60 * 60
+_LOGIN_ATTEMPT_CLEANUP_INTERVAL_SECONDS = 10 * 60
+_last_login_attempt_cleanup = 0
+_login_attempt_cleanup_lock = threading.Lock()
 
 
-@lru_cache(maxsize=1)
-def _login_limiter(redis_url: str) -> Redis:
-    return Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
-
-
-def _claim_login_attempt(email: str) -> tuple[Redis, str] | None:
-    redis_url = os.getenv("REDIS_URL")
-    if not redis_url:
-        # Local tests and the single-process development server may run without Redis.
-        return None
-
-    key = f"orqestra:auth:login:{hashlib.sha256(email.encode()).hexdigest()}"
+def _claim_login_attempt(email: str, db: Session) -> str:
+    """Atomically count attempts in the primary database, shared by every API worker."""
+    global _last_login_attempt_cleanup
+    email_hash = hashlib.sha256(email.encode()).hexdigest()
+    current = int(time.time())
     try:
-        client = _login_limiter(redis_url)
-        attempts, ttl = cast(
-            Any,
-            client.eval(_LOGIN_ATTEMPT_SCRIPT, 1, key, str(LOGIN_ATTEMPT_WINDOW_SECONDS)),
+        # Drop old digests periodically so attempted addresses are not retained indefinitely.
+        with _login_attempt_cleanup_lock:
+            if current - _last_login_attempt_cleanup >= _LOGIN_ATTEMPT_CLEANUP_INTERVAL_SECONDS:
+                db.execute(
+                    delete(LoginAttempt).where(
+                        LoginAttempt.window_started_at < current - LOGIN_ATTEMPT_RETENTION_SECONDS
+                    )
+                )
+                db.commit()
+                _last_login_attempt_cleanup = current
+
+        dialect = db.get_bind().dialect.name
+        insert_attempt: Any
+        if dialect == "postgresql":
+            insert_attempt = postgres_insert(LoginAttempt)
+        elif dialect == "sqlite":
+            insert_attempt = sqlite_insert(LoginAttempt)
+        else:
+            raise HTTPException(503, "Authentication service temporarily unavailable")
+
+        expired = LoginAttempt.window_started_at <= current - LOGIN_ATTEMPT_WINDOW_SECONDS
+        statement: Any = insert_attempt.values(
+            email_hash=email_hash,
+            window_started_at=current,
+            attempts=1,
         )
-    except (RedisError, ValueError):
+        statement = statement.on_conflict_do_update(
+            index_elements=[LoginAttempt.email_hash],
+            set_={
+                "window_started_at": case((expired, current), else_=LoginAttempt.window_started_at),
+                "attempts": case((expired, 1), else_=LoginAttempt.attempts + 1),
+            },
+        ).returning(LoginAttempt.attempts, LoginAttempt.window_started_at)
+        attempts, window_started_at = db.execute(statement).one()
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError:
+        db.rollback()
         raise HTTPException(503, "Authentication service temporarily unavailable") from None
+
     if int(attempts) > LOGIN_ATTEMPT_LIMIT:
+        retry_after = int(window_started_at) + LOGIN_ATTEMPT_WINDOW_SECONDS - current
         raise HTTPException(
             429,
             "Too many login attempts. Try again later.",
-            headers={"Retry-After": str(max(int(ttl), 1))},
+            headers={"Retry-After": str(max(retry_after, 1))},
         )
-    return client, key
+    return email_hash
 
 
-def _clear_login_attempts(limiter: tuple[Redis, str] | None) -> None:
-    if limiter is None:
-        return
-    client, key = limiter
+def _clear_login_attempts(email_hash: str, db: Session) -> None:
     try:
-        client.delete(key)
-    except RedisError:
+        db.execute(delete(LoginAttempt).where(LoginAttempt.email_hash == email_hash))
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
         raise HTTPException(503, "Authentication service temporarily unavailable") from None
 
 
@@ -205,12 +231,12 @@ def register(
 
 @router.post("/login", dependencies=[Depends(check_origin)])
 def login(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
-    limiter = _claim_login_attempt(body.email)
+    email_hash = _claim_login_attempt(body.email, db)
     user = db.scalar(select(User).where(User.email == body.email))
     valid = verify_password(body.password, user.password_hash if user else DUMMY_HASH)
     if user is None or not valid or not user.is_active:
         raise HTTPException(401, "Invalid email or password")
-    _clear_login_attempts(limiter)
+    _clear_login_attempts(email_hash, db)
     return session_response(db, user, request, response)
 
 
