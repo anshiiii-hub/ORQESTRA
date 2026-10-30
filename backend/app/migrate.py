@@ -39,8 +39,7 @@ def require_current_schema(db_engine: Engine = engine) -> None:
                 raise
             delay = min(2 ** (attempt - 1), 8)
             logger.warning(
-                "Database unavailable during startup; retrying schema check "
-                "(%d/%d) in %d seconds.",
+                "Database unavailable during startup; retrying schema check (%d/%d) in %d seconds.",
                 attempt,
                 STARTUP_DATABASE_ATTEMPTS,
                 delay,
