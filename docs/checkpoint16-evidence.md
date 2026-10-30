@@ -66,6 +66,20 @@ GitHub repository settings now show the Dependency Graph and Dependabot alerts e
 
 The Blitz dashboard showed the app partly asleep, with frontend and API sleeping and the worker running. Its last successful hosted release was `23936a6`; the documentation-only `77572fa` version was queued behind 18 free builders. The pending build requested `REDIS_URL`, while the account's free plan allows one managed database and ORQESTRA already uses it for PostgreSQL. The login throttle was changed to use an atomic PostgreSQL counter instead, avoiding a new paid plan, database, or external service. The resulting release still needs to build before hosted readiness and demo checks can be repeated.
 
+## Fresh hosted backup and restore — 30 October 2026
+
+The signed-in Blitz free-plan dashboard showed the ORQESTRA PostgreSQL 17 database as Ready, under 1 MiB, with seven nightly copies retained. The newest listed copy was from 30 October at 10:58 local time. A fresh provider export, `orqestra-2026-10-30-0729.dump` (196,516 bytes; 188 PostgreSQL archive entries), was downloaded and validated with `pg_restore --list`.
+
+The dump was encrypted with GPG AES-256 using the existing local passphrase and packaged with a manifest and SHA-256 checksums at `backups/orqestra_20261030T073807Z.tar.gz.gpg` (SHA-256 `91ec50313863bb5f6644e217d27d9bb68441c2bc9f3048540d8207cab077f5a1`). Decryption, dump checksum, and manifest checksum verification passed. The archive remains local; the older 28 October encrypted archive is the copy already stored off-host.
+
+The dump restored into the separate local PostgreSQL.app 18.6 database `orqestra_restore_20261030`; the hosted database was not modified. The project schema gate passed at revision `0015`, and the snapshot counts matched the restored database: 2 users, 2 workspaces, 10 workflows, 36 tasks, and 10 artifacts. This verifies a fresh hosted backup and isolated restore, but does not satisfy operator-controlled VPS, public DNS/TLS, independent passphrase escrow, or remote-restore gates.
+
+## Blitz API restart investigation — 30 October 2026
+
+The Blitz app dashboard showed ORQESTRA Online, with no error pages reported for the week, 94% uptime (including free-tier sleep time), and three process crashes since the last start. The saved API output from the 12:34 restart shows application startup failing during `require_current_schema()`: PostgreSQL closed the connection unexpectedly while the API was opening its startup connection. This is a database connection interruption, not evidence of a missing OpenAI key or a schema mismatch. The dashboard showed the managed database Ready and the app Online when checked.
+
+Added a bounded retry to the shared startup schema check: transient SQLAlchemy operational connection errors are retried five times with delays of 1, 2, 4, and 8 seconds before startup fails. Migration-head mismatches and non-connection failures still fail immediately. The change is local and still needs a hosted build and subsequent restart observation before its effect can be accepted.
+
 ## Failure and fix log
 
 | Observation | Cause | Fix or disposition |
@@ -82,7 +96,8 @@ The Blitz dashboard showed the app partly asleep, with frontend and API sleeping
 - Database credentials enter through a mounted secret file. The one-time bootstrap command refuses to create an account after the first user exists.
 - Backup archives require GPG encryption and include a manifest and checksums. Restore creates a new database, rejects the live database, applies migrations and checks row counts.
 - Guided demo boundaries are explicit: A and B use fixtures, C executes the bounded analyzer against synthetic data, and D is a persisted state simulation.
-- Checkpoint 16 remains prepared, not signed off, until a fresh-host deployment and public TLS are recorded by the operator, and the off-host backup's separate passphrase recovery is addressed. The encrypted archive's Drive copy and the isolated local restore flow are verified.
+- Checkpoint 16 remains prepared, not signed off, until an operator-controlled fresh-host deployment with public TLS and independent passphrase recovery are addressed. A fresh hosted dump now restores successfully in isolation; the newest encrypted archive remains local, and no remote restore drill has been verified.
+- Blitz shows the hosted app Online, but the API retry change has not yet been built there; observe the next startup before marking the restart issue resolved.
 
 ## Staging acceptance record
 

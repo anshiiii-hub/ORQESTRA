@@ -1,7 +1,9 @@
 """Migration helpers and explicit adoption of an existing Checkpoint 01 database."""
 
 import argparse
+import logging
 from pathlib import Path
+from time import sleep
 
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -9,10 +11,14 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine
+from sqlalchemy.exc import OperationalError
 
 from . import models  # noqa: F401
 from .db import engine
 from .legacy_schema import checkpoint_one_metadata
+
+logger = logging.getLogger(__name__)
+STARTUP_DATABASE_ATTEMPTS = 5
 
 
 def migration_config(database_url: str | None = None) -> Config:
@@ -23,8 +29,23 @@ def migration_config(database_url: str | None = None) -> Config:
 
 
 def require_current_schema(db_engine: Engine = engine) -> None:
-    with db_engine.connect() as connection:
-        current = MigrationContext.configure(connection).get_current_heads()
+    for attempt in range(1, STARTUP_DATABASE_ATTEMPTS + 1):
+        try:
+            with db_engine.connect() as connection:
+                current = MigrationContext.configure(connection).get_current_heads()
+            break
+        except OperationalError:
+            if attempt == STARTUP_DATABASE_ATTEMPTS:
+                raise
+            delay = min(2 ** (attempt - 1), 8)
+            logger.warning(
+                "Database unavailable during startup; retrying schema check "
+                "(%d/%d) in %d seconds.",
+                attempt,
+                STARTUP_DATABASE_ATTEMPTS,
+                delay,
+            )
+            sleep(delay)
     expected = ScriptDirectory.from_config(migration_config()).get_heads()
     if set(current) != set(expected):
         raise RuntimeError(
