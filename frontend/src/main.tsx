@@ -5,11 +5,12 @@ import {API, ApiError, request, upload} from './api';
 import './style.css';
 
 type Role = 'owner' | 'member' | 'viewer';
-type DashboardScreen = 'overview' | 'workflows' | 'data' | 'research' | 'knowledge' | 'approvals' | 'deliverables' | 'evaluation' | 'tools' | 'coding' | 'verification' | 'demos' | 'settings';
+type DashboardScreen = 'overview' | 'workflows' | 'data' | 'research' | 'knowledge' | 'approvals' | 'deliverables' | 'evaluation' | 'tools' | 'coding' | 'verification' | 'demos' | 'history' | 'settings';
 const navigationGroups: {label: string; items: {id: DashboardScreen; title: string; icon: React.ComponentType<{size?: number}>}[]}[] = [
   {label: 'WORKSPACE', items: [
     {id: 'overview', title: 'Overview', icon: LayoutDashboard},
     {id: 'workflows', title: 'Workflows', icon: GitBranch},
+    {id: 'history', title: 'Workflow history', icon: Clock3},
     {id: 'coding', title: 'Coding agent', icon: Code2},
     {id: 'data', title: 'Data agent', icon: FileSpreadsheet},
     {id: 'knowledge', title: 'Knowledge agent', icon: BookOpen},
@@ -26,6 +27,7 @@ const navigationGroups: {label: string; items: {id: DashboardScreen; title: stri
   ]},
 ];
 const screenMeta: Record<DashboardScreen, {title: string; description: string}> = {
+  history: {title: 'Workflow history', description: 'Search every workflow in this workspace by instructions or run ID.'},
   overview: {title: 'Workspace overview', description: 'A clear view of what is running, what is ready, and what needs attention.'},
   workflows: {title: 'Workflows', description: 'Plan, run, and inspect reliable multi-agent work.'},
   data: {title: 'Data analysis', description: 'Profile structured data and export reproducible results.'},
@@ -177,6 +179,11 @@ type DashboardProps = {session: Session; workspace: Workspace | null; workspaces
   onSwitch: (id: string) => void; onExpired: () => void; onSignedOut: () => void; onCreated: (workspace: Workspace) => void};
 
 function Dashboard({session, workspace, workspaces, message: parentMessage, onSwitch, onExpired, onSignedOut, onCreated}: DashboardProps) {
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyStatus, setHistoryStatus] = useState('');
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyRuns, setHistoryRuns] = useState<Run[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [workflowTab, setWorkflowTab] = useState('launch');
   const [activeScreen, setActiveScreen] = useState<DashboardScreen>('overview');
   const [prompt, setPrompt] = useState('Inspect the sales dataset, compute a numeric summary and verify the results.');
@@ -231,6 +238,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [memberRole, setMemberRole] = useState<'member' | 'viewer'>('viewer');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [connectionMessage, setConnectionMessage] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const actionController = useRef(new AbortController());
   useEffect(() => () => actionController.current.abort(), []);
@@ -296,10 +304,12 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         if (controller.signal.aborted) return;
         setWorkspaceMetrics(metrics);
         if (details) {setWorkflow(details[0]); setEvents(details[1]);}
+        setConnectionMessage('');
       } catch (error) {
         if (!controller.signal.aborted) {
           if (error instanceof ApiError && error.status === 404) {setRuns([]); setWorkflow(null); setEvents([]); setMembers([]); setDocuments([]); setApprovals([]); setArtifacts([]); setBenchmarkSummary(null); setSystemReadiness(null); setWorkspaceMetrics(null);}
-          fail(error);
+          if (error instanceof ApiError && error.status === 401) onExpired();
+          else {setConnectionMessage((error as Error).message); setSystemReadiness(null);}
         }
       }
       if (!controller.signal.aborted) timer = setTimeout(refresh, 1800);
@@ -312,7 +322,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       setStreamStatus('offline');
       return;
     }
-    const streamURL = new URL(`${API}/api/v1/workflows/${encodeURIComponent(selected)}/stream`);
+    const streamURL = new URL(`${API}/api/v1/workflows/${encodeURIComponent(selected)}/stream`, window.location.origin);
     streamURL.searchParams.set('after', '0');
     const source = new EventSource(streamURL, {withCredentials: true});
     source.onopen = () => setStreamStatus('live');
@@ -485,6 +495,19 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     setEvents([]);
     setSelected(result.workflow_id); setWorkflowTab('execution'); setActiveScreen('workflows');
   });
+  useEffect(() => {
+    if (!workspace || activeScreen !== 'history') return;
+    const controller = new AbortController();
+    setHistoryLoading(true);
+    const timer = setTimeout(() => {
+      const query = new URLSearchParams({workspace_id: workspace.id, q: historyQuery, status: historyStatus, offset: String(historyPage * 20), limit: '21'});
+      request<Run[]>(`/workflows?${query}`, {signal: controller.signal})
+        .then(value => {if (!controller.signal.aborted) setHistoryRuns(value);})
+        .catch(fail)
+        .finally(() => {if (!controller.signal.aborted) setHistoryLoading(false);});
+    }, 250);
+    return () => {clearTimeout(timer); controller.abort();};
+  }, [workspace?.id, activeScreen, historyQuery, historyStatus, historyPage, refreshKey]);
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const pastApprovals = approvals.filter(a => a.status !== 'pending');
   const hasDisabledAgent = agents.some(agent => !agent.enabled);
@@ -522,8 +545,14 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     </aside>
     <main className="app-main"><div className="topbar"><div className="breadcrumb"><span>ORQESTRA</span><span className="breadcrumb-separator">/</span><strong>{workspace?.name || 'Workspace'}</strong></div><div className="topbar-actions"><div className={`service-chip ${systemReadiness?.status === 'ready' ? 'service-ready' : ''}`}><span className="status-dot"/>{systemReadiness?.status === 'ready' ? 'All systems operational' : systemReadiness ? `API ${systemReadiness.status}` : 'Connecting to services'}</div><span className="topbar-role">{workspace?.role || 'Workspace'}</span></div></div>
       <header className="page-heading"><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>{screenMeta[activeScreen].title}</h1><p>{screenMeta[activeScreen].description}</p></div><div className="head-tag"><Sparkles size={15}/><span>{workspace?.role === 'viewer' ? 'Read-only access' : 'Workspace ready'}</span></div></header>
-      {(message || parentMessage) && <p role="alert" className="error">{message || parentMessage}</p>}
+      {(message || connectionMessage || parentMessage) && <p role="alert" className="error">{message || connectionMessage || parentMessage}</p>}
       {!workspace ? <section className="panel"><h2>A place for your work</h2><p className="muted">Name your workspace using the form in the sidebar. Each workspace has its own workflows and members.</p></section> : <>
+      <section className="panel" data-screen="history" data-active={activeScreen === 'history'}>
+        <div className="history-filters"><div><label htmlFor="history-query">Search all runs</label><input id="history-query" type="search" value={historyQuery} maxLength={200} placeholder="Instructions or workflow ID" onChange={event => {setHistoryQuery(event.target.value); setHistoryPage(0);}}/></div><div><label htmlFor="history-status">Status</label><select id="history-status" value={historyStatus} onChange={event => {setHistoryStatus(event.target.value); setHistoryPage(0);}}><option value="">All statuses</option>{['queued','planning','running','succeeded','failed','cancelled','paused','waiting_approval'].map(status => <option key={status} value={status}>{status.replaceAll('_',' ')}</option>)}</select></div></div>
+        <div role="status" aria-live="polite" className="helper">{historyLoading ? 'Searching workflows…' : `Page ${historyPage + 1} · ${Math.min(historyRuns.length,20)} workflows`}</div>
+        <div className="history-list">{!historyLoading && historyRuns.length === 0 && <p className="muted">No workflows match your search.</p>}{historyRuns.slice(0,20).map(run => <button key={run.id} className="history-run" onClick={() => {setSelected(run.id); setWorkflow(null); setEvents([]); setWorkflowTab('execution'); setActiveScreen('workflows');}}><GitBranch size={18}/><span><strong>{run.prompt}</strong><small>{run.id}</small></span><span className={`status ${run.status}`}>{run.status.replaceAll('_',' ')}</span><ArrowUpRight size={16}/></button>)}</div>
+        <div className="history-pagination"><button className="secondary" disabled={historyLoading || historyPage === 0} onClick={() => setHistoryPage(page => page - 1)}>Previous page</button><button className="secondary" disabled={historyLoading || historyRuns.length <= 20} onClick={() => setHistoryPage(page => page + 1)}>Next page</button></div>
+      </section>
       <section className="agent-directory" data-screen="overview" data-active={activeScreen === 'overview'} aria-label="Agent applications">
         {([
           ['research', 'Research agent', 'Source research', 'Collect evidence from approved URLs and inspect source provenance.', Globe2],

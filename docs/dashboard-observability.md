@@ -10,10 +10,10 @@ The workflow dashboard now renders task dependencies as an accessible SVG DAG. E
 
 ## Search and analytics
 
-- The sidebar can filter the latest 50 workspace workflows by prompt text or status.
+- The sidebar filters recent runs. The Workflow history destination searches the entire workspace by prompt or run ID, filters by status, and paginates in pages of 20. The API preserves its array response and supports bounded `q`, `status`, `offset`, and `limit` parameters. SQL wildcard characters in search text are escaped.
 - Workspace analytics display workflow counts by status and recent worker heartbeats. The metrics endpoint applies workspace membership checks.
 - Recovery rate is based on workflows with pause history and a resume record; it remains unavailable until there is an eligible paused workflow.
 
 ## Acceptance notes
 
-The current frontend build verifies TypeScript and production bundling. The repository does not yet have browser E2E coverage for keyboard navigation, an interrupted/reconnected SSE stream, or rendering dependency branches. Those manual and automated acceptance checks remain part of completing the handbook checkpoint. The built-in workflow list is capped at 50, so search does not cover older records yet.
+The current frontend build verifies TypeScript and production bundling. The repository does not yet have browser E2E coverage for keyboard navigation, an interrupted/reconnected SSE stream, or rendering dependency branches. Manual browser acceptance on 2 November 2026 verified keyboard activation, a three-node execution graph, live events, and automatic reconnect after an API process interruption. Automated browser E2E coverage remains a separate enhancement. Search now covers older workspace records; PostgreSQL and SQLite tests verify paging, literal wildcard searches, and workspace isolation. Same-origin SSE URLs are resolved against the browser origin.

@@ -1,7 +1,7 @@
 # ORQESTRA AI — implementation status
 > **Design and Development of an Adaptive, Fault-Tolerant Multi-Agent LLM Orchestration Framework**
 
-This prototype runs deterministic analysis through a persisted PostgreSQL task graph. It includes optional OpenAI planning, leased task scheduling, fixed/adaptive routing, authenticated research, bounded CSV/XLSX analysis, reviewed code proposals in isolated sandboxes, workspace-scoped document memory, human-in-the-loop write approvals, deliverable synthesis, verification, recovery controls, and a frozen 78-case evaluation suite. Offline planning remains the default and makes no provider calls. The full autonomous coding product remains planned.
+This demonstration application runs deterministic analysis through a persisted PostgreSQL task graph. It includes optional OpenAI planning, leased task scheduling, fixed/adaptive routing, authenticated research, bounded CSV/XLSX analysis, reviewed code proposals in isolated sandboxes, workspace-scoped document memory, human-in-the-loop write approvals, deliverable synthesis, verification, recovery controls, and a frozen 78-case evaluation suite. Offline planning remains the default and makes no provider calls. The selected free hosted demonstration scope keeps live LLM planning and code execution optional and disabled on the managed host.
 
 ## What actually works
 - React/TypeScript dashboard, workflow submission, task graph, metrics, event log and verified output.
@@ -69,8 +69,10 @@ The API uses a session cookie and an in-memory CSRF token. Shared API keys no lo
 - Workflow reads, outputs, cancellations, and events are workspace-scoped. Legacy workflows remain hidden until explicitly assigned by a local operator. Retention and document/artifact authorization will be added with those features.
 - Python and Node dependencies should be updated and vulnerability-scanned before deployment. No unrestricted shell or network tool is exposed to agents.
 
+See the current [completion record](docs/project-completion.md) for verified work, architecture substitutions, and remaining acceptance.
+
 ## Checkpoint status
-Repository feature numbers do not match the project's 16-checkpoint plan. Checkpoints 13 and 14 still lack a LangGraph PostgreSQL checkpointer, live PostgreSQL worker-kill/restart acceptance, keyboard/SSE-reconnect browser E2E, and search beyond the latest 50 workflows; see [dashboard observability](docs/dashboard-observability.md) and [recovery notes](docs/benchmarks-recovery.md). Checkpoint 15 has a frozen 78-case, three-replicate evaluation and an OWASP-informed source-and-test review, not a third-party penetration test or provider quality evaluation. Checkpoint 16 deployment assets and final report/viva materials are present. A Blitz-hosted workspace exists, but its latest release and readiness need rechecking; fresh-VPS TLS deployment and live hosted backup/restore acceptance remain open. See the [Checkpoint 16 evidence log](docs/checkpoint16-evidence.md).
+Repository feature numbers do not match the project's 16-checkpoint plan. The custom Python DAG runtime is the handbook Part F alternative to LangGraph. Real PostgreSQL worker-kill/restart and cancellation acceptance now pass, and full-history workspace search is implemented. Keyboard/SSE-reconnect browser E2E remains open; see [dashboard observability](docs/dashboard-observability.md) and [recovery notes](docs/benchmarks-recovery.md). Checkpoint 15 has a frozen 78-case, three-replicate evaluation and an OWASP-informed source-and-test review, not a third-party penetration test or provider quality evaluation. Checkpoint 16 deployment assets and final report/viva materials are present. A Blitz-hosted workspace exists, but its latest release and readiness need rechecking; fresh-VPS TLS deployment and live hosted backup/restore acceptance remain open. See the [Checkpoint 16 evidence log](docs/checkpoint16-evidence.md).
 
 ## Repository
 ```

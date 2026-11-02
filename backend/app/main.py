@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from .approvals import (
@@ -264,8 +264,8 @@ def serialize(
 
 
 @app.get("/api/v1/health", include_in_schema=False)
-@app.get("/api/v1/healthz", include_in_schema=False)
 @app.get("/health")
+@app.get("/api/v1/healthz", include_in_schema=False)
 @app.get("/healthz")
 def health():
     return {
@@ -1201,17 +1201,29 @@ def create_workflow(
 @app.get("/api/v1/workflows")
 def list_workflows(
     workspace_id: str = Query(min_length=1, max_length=36),
+    q: str = Query(default="", max_length=200),
+    status: str = Query(default="", max_length=30),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    limit: int = Query(default=50, ge=1, le=100),
     identity: Identity = Depends(current_identity),
     db: Session = Depends(get_db),
 ):
     from .auth import require_role
 
     require_role(db, workspace_id, identity)
+    query = select(Workflow).where(Workflow.workspace_id == workspace_id)
+    if q.strip():
+        term = q.strip()
+        query = query.where(
+            or_(
+                Workflow.prompt.icontains(term, autoescape=True),
+                Workflow.id.icontains(term, autoescape=True),
+            )
+        )
+    if status:
+        query = query.where(Workflow.status == status)
     ws = db.scalars(
-        select(Workflow)
-        .where(Workflow.workspace_id == workspace_id)
-        .order_by(Workflow.created_at.desc())
-        .limit(50)
+        query.order_by(Workflow.created_at.desc(), Workflow.id.desc()).offset(offset).limit(limit)
     ).all()
     return [
         {"id": w.id, "prompt": w.prompt, "status": w.status, "created_at": w.created_at.isoformat()}

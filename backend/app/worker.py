@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -19,6 +19,11 @@ from .registry import REGISTRY, RegistryError
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("orqestra.worker")
 TASK_LEASE_SECONDS = 360
+
+
+def lease_deadline(value: datetime) -> datetime:
+    """SQLite returns naive UTC; PostgreSQL may return any aware timezone."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def prepare_request(
@@ -183,7 +188,7 @@ def tick(worker_id: str = WORKER_ID) -> bool:
                     if task.status == "running"
                     and (
                         task.lease_expires_at is None
-                        or task.lease_expires_at.replace(tzinfo=current.tzinfo) <= current
+                        or lease_deadline(task.lease_expires_at) <= current
                     )
                 ),
                 None,
@@ -382,7 +387,7 @@ def recover_running_tasks():
                 current = now()
                 if (
                     task.lease_expires_at is not None
-                    and task.lease_expires_at.replace(tzinfo=current.tzinfo) > current
+                    and lease_deadline(task.lease_expires_at) > current
                 ):
                     continue
                 attempt = (
