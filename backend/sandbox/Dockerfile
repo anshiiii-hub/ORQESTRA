@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 LABEL org.orqestra.sandbox="checkpoint-10" \
       org.orqestra.sandbox.version="0.1.0"
