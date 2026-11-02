@@ -1,0 +1,6 @@
+Base commit: 8f4ce212786bc37ae9ad6b694e16b1f7847329e2
+Command: docker compose exec api pytest -q
+Result: Cannot connect to the Docker daemon at unix:///Users/anshita/.docker/run/docker.sock. Is the docker daemon running?
+Equivalent local command (before worker/dispatch edits): backend/.venv/bin/python -m pytest -q backend/tests
+282 passed, 4 skipped, 1 warning in 40.04s
+Warning: starlette.testclient uses deprecated anyio.abc.BlockingPortal alias.

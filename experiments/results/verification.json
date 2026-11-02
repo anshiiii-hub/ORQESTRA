@@ -1,0 +1,8 @@
+{
+  "primary_trials": 540,
+  "cells": 18,
+  "trials_per_cell": 30,
+  "unique_trial_keys": true,
+  "wilson_matches_scipy": true,
+  "analysis_regenerates_identically": true
+}

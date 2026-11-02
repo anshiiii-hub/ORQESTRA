@@ -1,0 +1,1 @@
+{"passed":true,"checks":["row count matches source","column schema matches source","numeric columns match source","numeric counts, sums, means and ranges recalculated"],"summary":{"row_count":2,"columns":["item","sales"],"numeric_columns":{"sales":{"count":2,"sum":30.0,"mean":15.0,"min":10.0,"max":20.0}}}}

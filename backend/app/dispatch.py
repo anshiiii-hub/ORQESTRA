@@ -1,6 +1,8 @@
 """Validate dispatch permissions, inputs and outputs at the agent boundary."""
 
 import json
+import os
+import time
 from time import monotonic
 from typing import Callable
 
@@ -95,6 +97,23 @@ def dispatch(
     started = clock()
     try:
         output = agent.handler(request.payload.csv_text, context)
+        if os.getenv("EXPERIMENT_RECORD", "0") == "1":
+            # Durable completed-invocation evidence, separate from result publication.
+            from .db import SessionLocal
+            from .models import Event
+
+            with SessionLocal.begin() as db:
+                db.add(
+                    Event(
+                        workflow_id=request.workflow_id,
+                        kind="experiment_execution",
+                        details={"task_id": request.task_id, "request_id": request.request_id},
+                    )
+                )
+        delay_ms = int(os.getenv("EXPERIMENT_AGENT_DELAY_MS", "0"))
+        if delay_ms > 0:
+            # Keep a completed deterministic invocation in flight before publication.
+            time.sleep(delay_ms / 1000)
     except Exception:
         # Exception messages can contain input data, credentials or host paths.
         return failed_result(

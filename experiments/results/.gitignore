@@ -1,0 +1,5 @@
+# All worker logs are preserved together in worker_logs.tar.gz.
+raw_workers/
+repeat_workers/
+concurrent_repeat_workers/
+pilot_workers/

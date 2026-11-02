@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -18,7 +19,11 @@ from .registry import REGISTRY, RegistryError
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("orqestra.worker")
-TASK_LEASE_SECONDS = 360
+TASK_LEASE_SECONDS = int(os.getenv("TASK_LEASE_SECONDS", "360"))
+EXPERIMENT_DESIGN = os.getenv("EXPERIMENT_DESIGN", "full")
+EXPERIMENT_RECORD = os.getenv("EXPERIMENT_RECORD", "0") == "1"
+if TASK_LEASE_SECONDS <= 0 or EXPERIMENT_DESIGN not in {"full", "no_fencing", "no_lease"}:
+    raise ValueError("Invalid lease or experiment design")
 
 
 def lease_deadline(value: datetime) -> datetime:
@@ -193,7 +198,8 @@ def tick(worker_id: str = WORKER_ID) -> bool:
                 ),
                 None,
             )
-            if expired is not None:
+            # The naive baseline deliberately leaves abandoned work running.
+            if expired is not None and EXPERIMENT_DESIGN != "no_lease":
                 previous = (
                     db.get(TaskAttempt, expired.current_attempt_id)
                     if expired.current_attempt_id
@@ -301,7 +307,29 @@ def tick(worker_id: str = WORKER_ID) -> bool:
             and task.status == "running"
             and task.current_attempt_id == completed_attempt.id
         )
+        was_stale = not owns_attempt
+        # Only the ablation bypasses ownership; full retains the original predicate above.
+        if EXPERIMENT_DESIGN == "no_fencing":
+            owns_attempt = True
         active = workflow.status in ("queued", "running")
+        if EXPERIMENT_RECORD:
+            db.add(
+                Event(
+                    workflow_id=wid,
+                    kind="experiment_publish",
+                    details={
+                        "task_id": tid,
+                        "attempt_id": attempt_id,
+                        "worker_id": worker_id,
+                        "stale": was_stale,
+                        "accepted": owns_attempt
+                        and active
+                        and outcome is not None
+                        and failure is None,
+                        "request_id": outcome.request_id if outcome else None,
+                    },
+                )
+            )
         if workflow.status == "paused" and task.current_attempt_id == completed_attempt.id:
             completed_attempt.status = "superseded"
             completed_attempt.finished_at = now()
@@ -384,6 +412,8 @@ def recover_running_tasks():
         ).all()
         for task, workflow in stuck:
             if workflow.status in ("queued", "running"):
+                if EXPERIMENT_DESIGN == "no_lease":
+                    continue
                 current = now()
                 if (
                     task.lease_expires_at is not None
