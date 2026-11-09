@@ -356,3 +356,45 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 @media(max-width:1100px){.agent-directory{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.app-shell{height:auto;overflow:visible}.app-main{height:auto;overflow:visible}.app-shell .panel[data-screen]{max-height:none}.agent-directory{grid-template-columns:1fr}.agent-launch-card{padding:18px}.section-tabs{overflow-x:auto}.section-tabs button{flex:none}.app-shell .demo-grid{grid-template-columns:1fr}}
 .history-filters{display:grid;grid-template-columns:minmax(0,2fr) minmax(140px,1fr);gap:16px}.history-list{display:grid;gap:8px}.history-run{display:flex;align-items:center;gap:14px;width:100%;padding:14px;background:#f9fbfc;border:1px solid #e1e8ee;border-radius:9px;color:#425b70;text-align:left;cursor:pointer}.history-run>span:first-of-type{display:grid;gap:6px;flex:1;min-width:0}.history-run strong{font-size:12px;overflow-wrap:anywhere}.history-run small{font-size:10px;color:#8493a3}.history-pagination{display:flex;justify-content:space-between;margin-top:18px}.history-run:hover{border-color:#75b89f;background:#f0f8f4}@media(max-width:760px){.history-filters{grid-template-columns:1fr}.history-run{flex-wrap:wrap}}
+
+/* Utilitarian workspace: hierarchy and whitespace carry the interface. */
+:root{font-family:'DM Sans',sans-serif;color:#263746;background:#f7f8f6;font-synthesis:none}
+.app-shell{background:#f7f8f6;color:#263746}
+.app-shell .sidebar{background:#f1f3f1;border-color:#e1e5e2}
+.app-shell .brand{padding-bottom:30px}
+.app-shell .logo{background:#dcebe6;color:#286c5b;border-radius:7px}
+.app-shell .brand b{font-family:'Space Grotesk',sans-serif;letter-spacing:-.7px}
+.app-shell .brand b span{color:#357b68}
+.app-shell .navitem{border-radius:5px;color:#6c7c82}
+.app-shell .navitem.active{color:#245e50;background:#e1ece7}
+.app-shell .navitem:hover{background:#e9eeeb}
+.app-shell .side-label,.app-shell .eyebrow,.app-shell .nav-group-label{letter-spacing:1.15px;color:#81908b}
+.app-shell .panel,.app-shell .metric{background:transparent;border:0;border-radius:0;box-shadow:none}
+.app-shell .panel{padding:22px 0;border-top:1px solid #dce2de}
+.app-shell .metric{padding:14px 18px;border-left:1px solid #dce2de}
+.app-shell .metric:first-child{border-left:0}
+.app-shell .cards{gap:0}
+.app-shell .metric b{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600}
+.app-shell h1,.app-shell h2,.app-shell h3{font-family:'Space Grotesk',sans-serif;letter-spacing:-.55px;color:#243846}
+.app-shell .page-heading{margin-top:22px;margin-bottom:24px}
+.app-shell .page-heading h1{font-size:30px;font-weight:600}
+.app-shell .page-heading p,.app-shell header p{color:#72817f}
+.app-shell .head-tag{border:0;border-radius:4px;background:#e9efeb;color:#536a63}
+.app-shell input,.app-shell textarea,.app-shell select{border-radius:4px;background:#fff;border-color:#d7dfda;color:#263746}
+.app-shell input:focus,.app-shell textarea:focus,.app-shell select:focus{border-color:#4c8a75;box-shadow:0 0 0 2px #4c8a751a}
+.app-shell .primary{background:#286d5a;color:#fff;border-radius:4px;transition:background .15s ease}
+.app-shell .primary:hover:not(:disabled){background:#205c4b}
+.app-shell .secondary{background:transparent;color:#355d50;border-color:#cbd8d1;border-radius:4px}
+.app-shell .textbutton{color:#286d5a}
+.app-shell .agent-card,.app-shell .demo-card,.app-shell .history-run,.app-shell .approval-card,.app-shell .rubric-card{background:transparent;border-radius:4px;box-shadow:none}
+.app-shell .agent-card{border-color:#dce2de}
+.app-shell .history-list{gap:0}
+.app-shell .history-run{border-width:0 0 1px;border-color:#dce2de;padding:14px 4px}
+.app-shell .history-run:hover{background:#eef3f0;border-color:#b6c9bf}
+.app-shell .node,.app-shell .dag-node{border-radius:4px;box-shadow:none}
+.app-shell .dag-scroll{background:#f9faf8;border-radius:4px}
+.app-shell .section-tabs button{border-radius:0}
+.app-shell .planning-summary,.app-shell .dataset-summary{border-radius:4px}
+.app-shell .service-chip,.app-shell .nav-count{border-radius:3px}
+.app-shell button{transition:background-color .15s ease,color .15s ease,border-color .15s ease}
+@media(max-width:760px){.app-shell .metric{border-left:0;border-top:1px solid #dce2de}.app-shell .panel{padding:18px 0}}
