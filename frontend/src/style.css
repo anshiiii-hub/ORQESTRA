@@ -489,3 +489,58 @@ body,.app-shell{background:var(--canvas);color:var(--ink)}
 .app-shell input::placeholder,.app-shell textarea::placeholder{color:#708287;opacity:1}
 .app-shell .panel h2,.app-shell .panel h3{color:#233843}
 .app-shell .panel{color:#31464e}
+
+/* Swiss editorial direction: paper, ink, cobalt and a restrained orange signal. */
+:root{--canvas:#f7f5ef;--surface:#fffefa;--ink:#1d2c3b;--muted:#526476;--line:#d9ddd9;--teal:#315bd6;--teal-dark:#2448b6;--coral:#c56a3e;--mint:#e4eafa}
+body,.app-shell,.app-shell .app-main{background:var(--canvas);color:var(--ink)}
+.app-shell .sidebar{background:#e8ebf0;border-color:#d5dae2;color:#253548;box-shadow:3px 0 20px #2034540c}
+.app-shell .brand b{color:#1d2c3b}.app-shell .brand b span{color:#315bd6}.app-shell .brand small{color:#5b6c7f}
+.app-shell .logo{background:#d9e1fa;color:#294ebd;box-shadow:none}
+.app-shell .navitem{color:#45586d}.app-shell .navitem svg{color:#62758b}
+.app-shell .navitem:hover{background:#dce2ed;color:#1c3045}
+.app-shell .navitem.active{background:#dce4fb;border-color:#bac9f4;color:#2445aa;box-shadow:inset 3px 0 #315bd6}
+.app-shell .navitem.active svg{color:#315bd6}
+.app-shell .side-label,.app-shell .nav-group-label,.app-shell .recent-heading{color:#566b80}
+.app-shell .sidebar-recent,.app-shell .sidefoot{border-color:#cbd2dc}
+.app-shell .recent-btn,.app-shell .recent-btn strong,.app-shell .user-meta strong{color:#304358}
+.app-shell .recent-btn small,.app-shell .recent-empty,.app-shell .user-meta small{color:#5c7082}
+.app-shell .recent-btn:hover,.app-shell .recent-btn.current{background:#dce2ed}
+.app-shell .user-avatar{background:#dbe4fb;border-color:#bfcced;color:#294ebd}
+.app-shell .page-heading .eyebrow,.app-shell .eyebrow{color:#3459bb}
+.app-shell .page-heading h1,.app-shell h1,.app-shell h2,.app-shell h3,.app-shell .panel h2,.app-shell .panel h3{color:#1d2c3b}
+.app-shell .page-heading p,.app-shell .muted,.app-shell .helper{color:#526476}
+.app-shell .topbar{border-color:#d9ddd9}.app-shell .breadcrumb,.app-shell .service-chip{color:#526476}
+.app-shell .breadcrumb>span:first-child,.app-shell .breadcrumb strong{color:#304358}
+.app-shell .workspace-switcher label,.app-shell .workspace-create[open] label{color:#304358}
+.app-shell .workspace-select-wrap select,.app-shell input,.app-shell textarea,.app-shell select{background:#fffefa;border-color:#cbd3dc;color:#1d2c3b}
+.app-shell .workspace-create[open]{background:#fffefa;border-color:#d9ddd9}
+.app-shell .workspace-create[open] form{background:transparent}
+.app-shell .workspace-create[open] input::placeholder,.app-shell input::placeholder,.app-shell textarea::placeholder{color:#65768a;opacity:1}
+.app-shell .workspace-create[open] .secondary{background:#e5eafa;border-color:#c3cff0;color:#2448b6}
+.app-shell .primary{background:#315bd6;box-shadow:0 4px 12px #315bd626}
+.app-shell .primary:hover:not(:disabled){background:#2448b6}
+.app-shell .secondary{background:#fffefa;border-color:#cbd3dc;color:#344c69}
+.app-shell .secondary:hover:not(:disabled){background:#edf1fb;border-color:#aabbea;color:#2448b6}
+.app-shell .textbutton,.app-shell .workspace-create summary{color:#315bd6}
+.app-shell .head-tag{background:#e4eafa;color:#294caa}
+.app-shell .overview-hero{background:linear-gradient(112deg,#1e3150 0%,#284d91 60%,#315bd6 100%);border-color:#284d91}
+.app-shell .hero-kicker{color:#c7d5ff}.app-shell .hero-copy h2{color:#fff}.app-shell .hero-copy p{color:#e0e8fc}
+.app-shell .hero-primary{background:#f2b56d;color:#332617}.app-shell .hero-primary:hover{background:#ffd092}
+.app-shell .hero-link{color:#e3eaff}.app-shell .hero-node{color:#294ebd}
+.app-shell .metric b,.app-shell .analytics-total strong{color:#315bd6}
+.app-shell .metric,.app-shell .panel{background:var(--surface);border-color:var(--line);box-shadow:0 3px 14px #26354b0a}
+.app-shell .agent-launch-card,.app-shell .demo-card,.app-shell .history-run{background:var(--surface);border-color:var(--line);color:var(--ink)}
+.app-shell .agent-launch-icon{background:#e4eafa;color:#315bd6}
+.app-shell .agent-launch-content small{color:#315bd6}.app-shell .agent-launch-content strong{color:#1d2c3b}
+.app-shell .agent-launch-content>span{color:#526476}
+.app-shell .section-tabs button[aria-pressed="true"]{background:#e4eafa;border-color:#c3cff0;color:#2448b6}
+.app-shell .status.succeeded,.app-shell .availability.ready{color:#16734e}
+.app-shell .status.failed,.app-shell .status.cancelled{color:#b7463a}
+.app-shell .status.planning,.app-shell .status.paused,.app-shell .status.waiting_approval{color:#96550e}
+.app-shell .track{background:#dce1e7}.app-shell .track div{background:linear-gradient(90deg,#315bd6,#7995ee)}
+.app-shell .viva-guide-steps li>b{color:#c56a3e}
+.app-shell input:focus,.app-shell textarea:focus,.app-shell select:focus{border-color:#315bd6;box-shadow:0 0 0 3px #315bd622}
+.app-shell button:focus-visible,.app-shell a:focus-visible{outline-color:#c56a3e}
+.app-shell .readiness-pill{background:#e7edf9;border-color:#c5d2f0;color:#294b9b}
+.app-shell .readiness-pill .status-dot.amber{background:#a65c18}
+.app-shell .workspace-create[open] .secondary:hover:not(:disabled){background:#d9e2fb}
