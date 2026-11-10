@@ -67,7 +67,8 @@ services:
       context: ./frontend
       target: development
     environment:
-      VITE_API_URL: http://localhost:${API_PORT:-8001}
+      VITE_API_URL: ${VITE_API_URL:-}
+      API_PROXY_TARGET: http://api:8000
     ports: ["127.0.0.1:5173:5173"]
     depends_on: [api]
 volumes:

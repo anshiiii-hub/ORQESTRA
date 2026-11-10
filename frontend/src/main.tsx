@@ -515,13 +515,22 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const normalizedRunSearch = runSearch.trim().toLocaleLowerCase();
   const filteredRuns = runs.filter(run => !normalizedRunSearch || `${run.prompt} ${run.status}`.toLocaleLowerCase().includes(normalizedRunSearch));
   const graphLayout = workflow ? layoutDag(workflow.tasks) : null;
+  const createWorkspace = (event: React.FormEvent) => {
+    event.preventDefault();
+    action(async () => {
+      const value = await mutate<Workspace>('/workspaces', {name: workspaceName});
+      onCreated(value);
+      setWorkspaceName('');
+    });
+  };
   return <div className="shell app-shell" data-active-screen={activeScreen}>
+    <a className="skip-link" href="#workspace-main">Skip to workspace content</a>
     <aside className="sidebar"><Brand/>
       <div className="workspace-switcher"><label htmlFor="workspace">CURRENT WORKSPACE</label><div className="workspace-select-wrap"><select id="workspace" value={workspace?.id || ''} onChange={e => onSwitch(e.target.value)}>
         {!workspace && <option value="">Create a workspace</option>}{workspaces.map(w => <option key={w.id} value={w.id}>{w.name} · {w.role}</option>)}
       </select><ChevronDown size={14}/></div></div>
-      <details className="workspace-create"><summary><Plus size={14}/> Create a workspace</summary>
-        <form onSubmit={e => {e.preventDefault(); action(async () => {const value = await mutate<Workspace>('/workspaces', {name: workspaceName}); onCreated(value); setWorkspaceName('');});}}>
+      <details className="workspace-create" open={!workspace}><summary><Plus size={14}/> Create a workspace</summary>
+        <form onSubmit={createWorkspace}>
           <label htmlFor="workspace-name">Workspace name</label><input id="workspace-name" required maxLength={100} value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} placeholder="e.g. Product research"/>
           <button className="secondary" disabled={busy}>Create workspace</button>
         </form>
@@ -543,10 +552,16 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </div>
       <div className="sidefoot"><div className="user-avatar" aria-hidden="true">{session.user.email.slice(0,1).toUpperCase()}</div><div className="user-meta"><strong>{session.user.email.split('@')[0]}</strong><small>{workspace?.role || 'Workspace'} · account</small></div><button className="signout-icon" title="Sign out" aria-label="Sign out" disabled={busy} onClick={() => action(async () => {await mutate('/auth/logout'); onSignedOut();})}><LogOut size={16}/></button></div>
     </aside>
-    <main className="app-main"><div className="topbar"><div className="breadcrumb"><span>ORQESTRA</span><span className="breadcrumb-separator">/</span><strong>{workspace?.name || 'Workspace'}</strong></div><div className="topbar-actions"><div className={`service-chip ${systemReadiness?.status === 'ready' ? 'service-ready' : ''}`}><span className="status-dot"/>{systemReadiness?.status === 'ready' ? 'All systems operational' : systemReadiness ? `API ${systemReadiness.status}` : 'Connecting to services'}</div><span className="topbar-role">{workspace?.role || 'Workspace'}</span></div></div>
+    <main className="app-main" id="workspace-main"><div className="topbar"><div className="breadcrumb"><span>ORQESTRA</span><span className="breadcrumb-separator">/</span><strong>{workspace?.name || 'Workspace'}</strong></div><div className="topbar-actions"><div className={`service-chip ${systemReadiness?.status === 'ready' ? 'service-ready' : ''}`}><span className="status-dot"/>{systemReadiness?.status === 'ready' ? 'All systems operational' : systemReadiness ? `API ${systemReadiness.status}` : 'Connecting to services'}</div><span className="topbar-role">{workspace?.role || 'Workspace'}</span></div></div>
       <header className="page-heading"><div><div className="eyebrow">{workspace?.name || 'YOUR WORKSPACE'} / CONTROL CENTER</div><h1>{screenMeta[activeScreen].title}</h1><p>{screenMeta[activeScreen].description}</p></div><div className="head-tag"><Sparkles size={15}/><span>{workspace?.role === 'viewer' ? 'Read-only access' : 'Workspace ready'}</span></div></header>
       {(message || connectionMessage || parentMessage) && <p role="alert" className="error">{message || connectionMessage || parentMessage}</p>}
-      {!workspace ? <section className="panel"><h2>A place for your work</h2><p className="muted">Name your workspace using the form in the sidebar. Each workspace has its own workflows and members.</p></section> : <>
+      {!workspace ? <section className="panel"><h2>Create your first workspace</h2><p className="muted">Workspaces keep workflows, documents, approvals, and artifacts separate. Name one to start the offline CSV pipeline, demos, and reporting tools.</p>
+        <form onSubmit={createWorkspace}>
+          <label htmlFor="first-workspace-name">Workspace name</label>
+          <input id="first-workspace-name" required maxLength={100} autoFocus value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} placeholder="e.g. Product research"/>
+          <button className="primary" disabled={busy} style={{marginTop:16}}>{busy ? 'Creating…' : 'Create workspace'}</button>
+        </form>
+      </section> : <>
       <section className="panel" data-screen="history" data-active={activeScreen === 'history'}>
         <div className="history-filters"><div><label htmlFor="history-query">Search all runs</label><input id="history-query" type="search" value={historyQuery} maxLength={200} placeholder="Instructions or workflow ID" onChange={event => {setHistoryQuery(event.target.value); setHistoryPage(0);}}/></div><div><label htmlFor="history-status">Status</label><select id="history-status" value={historyStatus} onChange={event => {setHistoryStatus(event.target.value); setHistoryPage(0);}}><option value="">All statuses</option>{['queued','planning','running','succeeded','failed','cancelled','paused','waiting_approval'].map(status => <option key={status} value={status}>{status.replaceAll('_',' ')}</option>)}</select></div></div>
         <div role="status" aria-live="polite" className="helper">{historyLoading ? 'Searching workflows…' : `Page ${historyPage + 1} · ${Math.min(historyRuns.length,20)} workflows`}</div>
@@ -565,6 +580,16 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
       </section>
       <section className="panel demo-showcase" data-screen="demos" data-active={activeScreen === 'demos'} aria-labelledby="demo-showcase-title">
         <div className="panel-head"><div><div className="eyebrow">GUIDED DEMONSTRATIONS</div><h2 id="demo-showcase-title">Run a showcase scenario</h2></div><PlayCircle size={18}/></div>
+        <section className="viva-guide" aria-labelledby="viva-guide-title">
+          <div className="viva-guide-intro"><span className="eyebrow">INVIGILATOR WALKTHROUGH · 3–5 MIN</span><h3 id="viva-guide-title">Follow one real workflow end to end</h3><p>Use the built-in sales CSV to show how ORQESTRA validates a task graph, runs registered agents, records attempts and verifies the final numbers.</p><button className="primary" type="button" disabled={!canWrite || busy} onClick={() => {setActiveScreen('workflows'); setWorkflowTab('launch');}}>Start with the CSV workflow <ArrowUpRight size={15}/></button></div>
+          <ol className="viva-guide-steps">
+            <li><b>01</b><span><strong>Submit</strong><small>Offline planning builds the inspect → summarize → verify graph without a paid API.</small></span></li>
+            <li><b>02</b><span><strong>Watch</strong><small>Execution shows dependencies, agent versions, attempt counts and live status.</small></span></li>
+            <li><b>03</b><span><strong>Inspect</strong><small>Activity and output expose the event trail, structured result and validation.</small></span></li>
+            <li><b>04</b><span><strong>Discuss reliability</strong><small>PostgreSQL lease recovery and stale-result fencing are covered by a separate fault-injection study.</small></span></li>
+          </ol>
+          <p className="viva-scope"><strong>Scope:</strong> hosted agents are deterministic and local to the project; live LLM planning and isolated code execution are disabled. The 78-case evaluation measures fixture agreement, while the separate worker study tests crash recovery and fencing.</p>
+        </section>
         <p className="helper">Demo A and B are fixture-backed walkthroughs; they do not fetch live sources or run code in the sandbox. Demo C profiles its synthetic CSV with the real bounded analyzer. Demo D is a checkpoint-state simulation, not a worker-kill test.</p>
         <div className="demo-grid">{demoCatalog.map(demo => <article className="demo-card" key={demo.key}>
           <div className="eyebrow">{demo.category}</div><h3>{demo.title}</h3><p>{demo.description}</p>
