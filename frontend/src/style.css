@@ -401,3 +401,44 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .app-shell .service-chip,.app-shell .nav-count{border-radius:3px}
 .app-shell button{transition:background-color .15s ease,color .15s ease,border-color .15s ease}
 @media(max-width:760px){.app-shell .metric{border-left:0;border-top:1px solid #dce2de}.app-shell .panel{padding:18px 0}}
+
+/* Warmer color system with a brighter product accent and clear status colors. */
+:root{--canvas:#f5f2ec;--surface:#fbfaf7;--ink:#20313c;--muted:#6c7b7d;--line:#dddcd4;--teal:#087f73;--teal-dark:#06675e;--coral:#d96f55;--mint:#d9eee5}
+body,.app-shell{background:var(--canvas);color:var(--ink)}
+.app-shell .sidebar{background:#202e3b;color:#edf3f0;box-shadow:8px 0 28px #20313c12}
+.app-shell .brand b{color:#f7faf8}.app-shell .brand b span{color:#71d2b2}
+.app-shell .logo{background:linear-gradient(145deg,#087f73,#3c9c83);color:#fff;box-shadow:0 5px 14px #087f7333}
+.app-shell .navitem{color:#b7c4c5}.app-shell .navitem:hover{background:#2a3c49;color:#fff}
+.app-shell .navitem.active{background:#314b55;color:#a4e7ce;box-shadow:inset 3px 0 #55c4a0}
+.app-shell .side-label,.app-shell .nav-group-label{color:#91a5a6}
+.app-shell .sidefoot{color:#c1cfcb}
+.app-shell .page-heading h1,.app-shell h1,.app-shell h2,.app-shell h3{color:#20313c}
+.app-shell .eyebrow{color:#087f73}
+.app-shell .head-tag{background:#e3ebe5;color:#325d54}
+.app-shell .primary{background:var(--teal);box-shadow:0 4px 12px #087f7324}
+.app-shell .primary:hover:not(:disabled){background:var(--teal-dark);transform:translateY(-1px)}
+.app-shell .secondary{color:#126e64;border-color:#a9c8bc;background:#f7faf6}
+.app-shell .secondary:hover:not(:disabled){background:#e6f2ec;border-color:#6fae98}
+.app-shell .textbutton{color:#087f73}
+.app-shell .panel{border-color:var(--line)}
+.app-shell .agent-launch-card{background:var(--surface);border-color:#e5dfd4;color:var(--ink);box-shadow:0 4px 14px #263c4010}
+.app-shell .agent-launch-card:hover{border-color:#70b59e;box-shadow:0 10px 26px #263c4018}
+.app-shell .agent-launch-icon{background:#ddf0e7;color:#087f73;border-radius:10px}
+.app-shell .agent-launch-content small{color:#087f73}
+.app-shell .agent-launch-content strong{color:#20313c}
+.app-shell .agent-launch-content>span{color:#6c7b7d}
+.app-shell .section-tabs button[aria-pressed="true"]{background:#dcefe6;border-color:#b8d9c9;color:#096b60}
+.app-shell .metric b{color:#087f73}
+.app-shell .status.succeeded,.app-shell .availability.ready{color:#087f73}
+.app-shell .status.failed,.app-shell .status.cancelled{color:#bd594c}
+.app-shell .status.planning,.app-shell .status.paused,.app-shell .status.waiting_approval{color:#9a6c20}
+.app-shell .track{background:#e2e4dc}.app-shell .track div{background:linear-gradient(90deg,#087f73,#65b58e)}
+.app-shell .viva-scope{background:#e8ece4;color:#576b65}.app-shell .viva-guide-steps li>b{color:#d96f55}
+.app-shell .demo-result{background:#e2f1e9;border-color:#bfddcb;color:#376957}.app-shell .demo-result strong{color:#17674c}
+.app-shell input:focus,.app-shell textarea:focus,.app-shell select:focus{border-color:#087f73;box-shadow:0 0 0 3px #087f731c}
+.app-shell .error{background:#fff0eb;border-color:#efc8bc;color:#a14336}
+.app-shell button:focus-visible,.app-shell a:focus-visible{outline-color:#d96f55}
+.auth-page{background:radial-gradient(circle at 14% 18%,#d9eee5 0,transparent 30%),radial-gradient(circle at 88% 82%,#f5ddd2 0,transparent 28%),var(--canvas)}
+.auth-panel{background:var(--surface);border-color:var(--line);border-radius:10px;box-shadow:0 18px 50px #20313c12}
+.auth-panel .primary{background:var(--teal)}
+@media(prefers-reduced-motion:reduce){.app-shell button,.app-shell .agent-launch-card{transition:none}}
