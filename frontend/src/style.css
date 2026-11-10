@@ -442,3 +442,49 @@ body,.app-shell{background:var(--canvas);color:var(--ink)}
 .auth-panel{background:var(--surface);border-color:var(--line);border-radius:10px;box-shadow:0 18px 50px #20313c12}
 .auth-panel .primary{background:var(--teal)}
 @media(prefers-reduced-motion:reduce){.app-shell button,.app-shell .agent-launch-card{transition:none}}
+
+/* Contrast corrections for the workspace sidebar and onboarding panel. */
+.app-shell .app-main{background:var(--canvas)}
+.app-shell .sidebar{background:#e9ece6;color:#263c43;box-shadow:3px 0 18px #293b3b0a}
+.app-shell .brand b{color:#263c43}.app-shell .brand small{color:#627674}
+.app-shell .logo{background:#d1e8dc;color:#126a58;box-shadow:none}
+.app-shell .navitem{color:#4c6266}
+.app-shell .navitem svg{color:#647e80}
+.app-shell .navitem:hover{background:#dce7df;color:#203f3f}
+.app-shell .navitem.active{background:#d5e8dc;border-color:#b8d4c2;color:#155d4b;box-shadow:inset 3px 0 #159879}
+.app-shell .navitem.active svg{color:#11836c}
+.app-shell .side-label,.app-shell .nav-group-label{color:#536a69}
+.app-shell .sidebar-recent{border-color:#cbd4cc}
+.app-shell .recent-heading{color:#526665}
+.app-shell .recent-btn,.app-shell .recent-btn strong{color:#344d52}
+.app-shell .recent-btn small,.app-shell .recent-empty{color:#64797a}
+.app-shell .recent-btn:hover,.app-shell .recent-btn.current{background:#dce7df}
+.app-shell .signout-icon{color:#4c6669}
+.app-shell .signout-icon:hover{background:#d8e3dc;color:#163e40}
+.app-shell .topbar{border-color:var(--line)}
+.app-shell .breadcrumb{color:#596b6c}
+.app-shell .breadcrumb>span:first-child,.app-shell .breadcrumb strong{color:#354b53}
+.app-shell .topbar-role{background:#e8e8df;color:#475b5b}
+.app-shell .readiness-pill{background:#e2eee7;border:1px solid #bfd8c8;border-radius:6px;color:#285d4b}
+.app-shell .readiness-pill .status-dot.amber{background:#bd781c;box-shadow:0 0 0 3px #bd781c20}
+.app-shell .workspace-switcher label{color:#465b66}
+.app-shell .workspace-select-wrap select{background:#fff;border-color:#c9d7d1;color:#293d48}
+.app-shell .workspace-create summary{color:#087f73}
+.app-shell .workspace-create[open]{padding:12px;background:#fbfaf7;border:1px solid #d7dfd7;border-radius:8px}
+.app-shell .workspace-create[open] label{color:#43585f}
+.app-shell .workspace-create[open] input{background:#fff;border-color:#c6d3d1;color:#233843}
+.app-shell .workspace-create[open] input::placeholder{color:#73858a;opacity:1}
+.app-shell .workspace-create[open] .secondary{background:#e7f1eb;border-color:#b9d5c4;color:#205c49}
+.app-shell .workspace-create[open] .secondary:hover:not(:disabled){background:#d8eadd}
+.app-shell .sidefoot{border-color:#cbd4cc;color:#344d52}
+.app-shell .user-avatar{background:#cfe5d9;border-color:#aacbb8;color:#175f4b}
+.app-shell .user-meta strong{color:#263c43}
+.app-shell .user-meta small{color:#607674}
+.app-shell .service-chip{color:#536c70}
+.app-shell .service-chip.service-ready{color:#176b4d}
+.app-shell .page-heading .eyebrow{color:#526f67}
+.app-shell .page-heading p,.app-shell .muted,.app-shell .helper{color:#586b70}
+.app-shell .head-tag{background:#e4eee7;color:#31584c}
+.app-shell input::placeholder,.app-shell textarea::placeholder{color:#708287;opacity:1}
+.app-shell .panel h2,.app-shell .panel h3{color:#233843}
+.app-shell .panel{color:#31464e}
