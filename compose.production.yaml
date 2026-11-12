@@ -31,10 +31,23 @@ services:
       APP_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env.production}
       SESSION_COOKIE_SECURE: "true"
       ALLOW_REGISTRATION: "false"
-      LLM_PLANNER_ENABLED: "false"
-      RESEARCH_ENABLED: "false"
-      SANDBOX_ENABLED: "false"
+      LLM_PLANNER_ENABLED: ${LLM_PLANNER_ENABLED:-false}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_INPUT_PRICE_PER_MILLION: ${LLM_INPUT_PRICE_PER_MILLION:-}
+      LLM_OUTPUT_PRICE_PER_MILLION: ${LLM_OUTPUT_PRICE_PER_MILLION:-}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2048}
+      RESEARCH_ENABLED: ${RESEARCH_ENABLED:-false}
+      RESEARCH_ALLOWED_DOMAINS: ${RESEARCH_ALLOWED_DOMAINS:-}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
+      DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-}
+      DOCKER_TLS_VERIFY: ${SANDBOX_DOCKER_TLS_VERIFY:-}
+      DOCKER_CERT_PATH: ${SANDBOX_DOCKER_CERT_PATH:-/run/sandbox-docker-certs}
     secrets: [db_password]
+    volumes:
+      - type: bind
+        source: ${SANDBOX_DOCKER_CERTS_HOST_PATH:-./.secrets/sandbox-docker-certs}
+        target: ${SANDBOX_DOCKER_CERT_PATH:-/run/sandbox-docker-certs}
+        read_only: true
     ports: !reset []
     restart: unless-stopped
     read_only: true
@@ -49,7 +62,12 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       DATABASE_NAME: orchestra
-      LLM_PLANNER_ENABLED: "false"
+      LLM_PLANNER_ENABLED: ${LLM_PLANNER_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_INPUT_PRICE_PER_MILLION: ${LLM_INPUT_PRICE_PER_MILLION:-}
+      LLM_OUTPUT_PRICE_PER_MILLION: ${LLM_OUTPUT_PRICE_PER_MILLION:-}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2048}
     secrets: [db_password]
     restart: unless-stopped
     read_only: true
