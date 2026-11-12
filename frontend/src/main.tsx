@@ -188,6 +188,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [activeScreen, setActiveScreen] = useState<DashboardScreen>('overview');
   const [prompt, setPrompt] = useState('Inspect the sales dataset, compute a numeric summary and verify the results.');
   const [csv, setCSV] = useState(demoCSV);
+  const [workflowCSVName, setWorkflowCSVName] = useState('');
   const [runs, setRuns] = useState<Run[]>([]);
   const [runSearch, setRunSearch] = useState('');
   const [selected, setSelected] = useState('');
@@ -206,6 +207,7 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
   const [sandboxConfiguration, setSandboxConfiguration] = useState<SandboxConfiguration | null>(null);
   const [sandboxFiles, setSandboxFiles] = useState('{\n  "main.py": "def add(a, b):\\n    return a - b\\n",\n  "test_main.py": "from main import add\\n\\ndef test_add():\\n    assert add(2, 3) == 5\\n"\n}');
   const [sandboxPatch, setSandboxPatch] = useState('{\n  "main.py": "def add(a, b):\\n    return a + b\\n"\n}');
+  const [sandboxUploadName, setSandboxUploadName] = useState('');
   const [sandboxCheck, setSandboxCheck] = useState('pytest');
   const [sandboxResult, setSandboxResult] = useState<SandboxResult | null>(null);
   const [knowledgeConfiguration, setKnowledgeConfiguration] = useState<KnowledgeConfiguration | null>(null);
@@ -385,6 +387,22 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
     });
     setSandboxResult(result);
   });
+  const loadSandboxFiles = async (fileList: FileList | null) => {
+    if (!fileList?.length) return;
+    const files: Record<string, string> = {};
+    let total = 0;
+    for (const file of Array.from(fileList)) {
+      const path = file.webkitRelativePath || file.name;
+      if (Object.keys(files).length >= (sandboxConfiguration?.max_files || 30)) throw new Error('Project exceeds the sandbox file limit.');
+      if (file.size > 256 * 1024) throw new Error(`${path} exceeds the 256 KiB per-file limit.`);
+      total += file.size;
+      if (total > 1024 * 1024) throw new Error('Project exceeds the 1 MiB sandbox input limit.');
+      files[path] = await file.text();
+    }
+    if (!Object.keys(files).length) return;
+    setSandboxFiles(JSON.stringify(files, null, 2));
+    setSandboxUploadName(`${Object.keys(files).length} file(s) loaded`);
+  };
   const uploadDocument = () => action(async () => {
     if (!workspace || !canWrite || !docUploadFile) return;
     const query = new URLSearchParams({workspace_id: workspace.id, filename: docUploadFile.name});
@@ -625,7 +643,9 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
             <div><label htmlFor="planning-deadline">Planning deadline (seconds)</label><input id="planning-deadline" type="number" required min="5" max={plannerConfiguration?.max_deadline_seconds || 180} step="1" value={planningDeadline} onChange={e => setPlanningDeadline(e.target.value)} disabled={busy || !canWrite}/></div>
           </div><p className="helper">At most two provider calls, including one repair. Cost estimates use operator-configured prices. An in-flight call may still be charged if you cancel.</p></>}
           <label htmlFor="prompt">Task instructions</label><textarea id="prompt" required minLength={3} rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={3000} disabled={!canWrite}/>
-          <label htmlFor="csv">Dataset (CSV text)</label><textarea id="csv" required minLength={3} maxLength={250000} className="code-input" rows={6} value={csv} onChange={e => setCSV(e.target.value)} disabled={!canWrite}/>
+          <label htmlFor="workflow-csv-file">Dataset CSV file</label><input id="workflow-csv-file" type="file" accept=".csv,text/csv" disabled={!canWrite || busy} onChange={async e => {const file=e.target.files?.[0]; if (!file) return; if (file.size > 250000) {setMessage('CSV file must be 250 KB or smaller.'); e.currentTarget.value=''; return;} try {const text=await file.text(); if (text.trim().length < 3) {setMessage('Choose a CSV file with data.'); return;} setCSV(text); setWorkflowCSVName(file.name); setMessage('');} catch {setMessage('Could not read that CSV file.');}}}/>
+          {workflowCSVName && <div className="helper">Loaded {workflowCSVName} · {(new Blob([csv]).size / 1024).toFixed(1)} KB</div>}
+          <label htmlFor="csv">Dataset (CSV text)</label><textarea id="csv" required minLength={3} maxLength={250000} className="code-input" rows={6} value={csv} onChange={e => {setCSV(e.target.value); setWorkflowCSVName('');}} disabled={!canWrite}/>
           <div className="helper">{canWrite ? hasDisabledAgent ? 'A required agent is disabled. Ask your operator to enable it before starting a workflow.' : plannerMode === 'offline' ? 'Demo pipeline: inspect CSV → summarize → verify. No LLM key required.' : 'The planner proposes a DAG; registered CSV agents execute and verify it locally.' : 'Viewer access lets you inspect workflows. Ask the owner for member access to run one.'}</div>
           <button className="primary" disabled={!canWrite || busy || hasDisabledAgent || (plannerMode === 'llm' && !plannerConfiguration?.llm_available)}>{busy ? 'Please wait…' : plannerMode === 'llm' ? 'Plan and execute' : 'Execute workflow'} <Play size={16}/></button>
         </form>
@@ -711,8 +731,10 @@ function Dashboard({session, workspace, workspaces, message: parentMessage, onSw
         </div>}
       </section>
       <section className="panel lower" data-screen="coding" data-active={activeScreen === 'coding'}><div className="panel-head"><div><div className="eyebrow">CODE PROPOSAL / ISOLATED TEST</div><h2>Review a patch in the sandbox</h2></div><Code2 size={18}/></div>
-        <p className="helper">Submit baseline files and a proposed replacement patch as JSON. Only the fixed Python checks below can run. The temporary container has no network or host mounts and is removed after the run.</p>
+        <p className="helper">Upload a project folder or select code files, then edit the baseline and proposed patch. Runs use fixed Python checks in a temporary container with no network or host mounts.</p>
         {!sandboxConfiguration?.available && <p className="helper">Sandbox execution is off. Enable it only after configuring a dedicated Docker Engine with TLS and building the pinned runtime image.</p>}
+        <p className="helper">Limits: {sandboxConfiguration?.max_files || 30} project files · 256 KiB per file · 1 MiB combined. Upload your baseline project; provide changed file contents in the patch editor.</p>
+        <div className="sandbox-upload"><label htmlFor="sandbox-project-upload">Upload baseline project files or folder</label><input id="sandbox-project-upload" type="file" multiple {...{webkitdirectory: ''}} disabled={!canWrite || busy} onChange={event => {void loadSandboxFiles(event.currentTarget.files).catch(error => fail(error)); event.currentTarget.value='';}}/><span className="helper">{sandboxUploadName || 'Text files only; folder structure is kept. Dependency installation and network access are unavailable in the sandbox.'}</span><label htmlFor="sandbox-patch-upload">Upload changed files for the proposed patch</label><input id="sandbox-patch-upload" type="file" multiple disabled={!canWrite || busy} onChange={async event => {try {const files: Record<string,string>={}; let total=0; for (const file of Array.from(event.currentTarget.files || [])) {const path=file.webkitRelativePath || file.name; if(Object.keys(files).length >= (sandboxConfiguration?.max_patch_files || 20)) throw new Error('Patch exceeds the sandbox file limit.'); if(file.size > 256*1024) throw new Error(`${path} exceeds the 256 KiB per-file limit.`); total += file.size; if(total > 1024*1024) throw new Error('Patch exceeds the 1 MiB sandbox input limit.'); files[path]=await file.text();} if(Object.keys(files).length) setSandboxPatch(JSON.stringify(files,null,2));} catch(error) {fail(error);} finally {event.currentTarget.value='';}}}/><span className="helper">Upload replacement contents for changed files, or edit the patch JSON below.</span></div>
         <div className="sandbox-form"><div><label htmlFor="sandbox-files">Baseline project files (JSON)</label><textarea id="sandbox-files" className="code-input" rows={9} value={sandboxFiles} onChange={event => setSandboxFiles(event.target.value)} disabled={!canWrite || busy}/></div><div><label htmlFor="sandbox-patch">Proposed patch files (JSON)</label><textarea id="sandbox-patch" className="code-input" rows={7} value={sandboxPatch} onChange={event => setSandboxPatch(event.target.value)} disabled={!canWrite || busy}/></div><div className="sandbox-actions"><label htmlFor="sandbox-check">Check to run</label><select id="sandbox-check" value={sandboxCheck} onChange={event => setSandboxCheck(event.target.value)} disabled={!canWrite || busy}><option value="pytest">pytest</option><option value="unittest">unittest</option><option value="compileall">compileall</option></select><button className="secondary" type="button" onClick={runSandbox} disabled={!canWrite || busy || !sandboxConfiguration?.available}>Run isolated check</button></div></div>
         {sandboxResult && <div className="sandbox-result"><div className="agent-card-head"><strong>Run {sandboxResult.id.slice(0, 8)}</strong><span className={`status ${sandboxResult.status}`}>{sandboxResult.status.toUpperCase()}</span></div><p className="helper">Network: {sandboxResult.artifact.isolation.network} · Host mounts: {sandboxResult.artifact.isolation.host_mounts}</p><h3>Proposed diff</h3><pre className="output">{sandboxResult.diff || 'No changes in the proposed patch.'}</pre>{sandboxResult.artifact.checks.map(check => <article className="agent-card" key={check.check}><strong>{check.check} · {check.status}{check.exit_code === null ? '' : ` · exit ${check.exit_code}`}</strong>{check.stdout && <pre className="output">{check.stdout}</pre>}{check.stderr && <pre className="output error">{check.stderr}</pre>}</article>)}</div>}
       </section>
